@@ -16,7 +16,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: complete, running, tested.** 64 server tests pass; web build + server
+**Status: complete, running, tested.** 67 server tests pass; web build + server
 typecheck are green.
 
 ---
@@ -67,7 +67,7 @@ docker compose up --build  # app → http://localhost:8080
 | Movies    | **TMDB API** — instant (typeahead) search, browse/discover, posters, ratings, IMDb ids (**key set**) |
 | Places    | **OpenStreetMap** — Nominatim geocode + Overpass POI search for date discovery (**free, keyless**) |
 | Emoji     | Auto-pick for date ideas via Claude (optional key; keyword fallback) |
-| WhatsApp  | `whatsapp-web.js` (unofficial, free) — **optional**, currently fixture |
+| WhatsApp  | **Baileys** (unofficial, free, no browser) — **optional**, currently fixture; **opt-in**, gated behind activation |
 | Calendar  | `.ics` invites emailed via **Resend** — **optional**, dormant until keyed |
 | Tests     | Vitest (unit/integration, real DB) |
 | Delivery  | Docker Compose (local); **Railway** via `railway.*.json` + Dockerfiles (see `docs/DEPLOY-RAILWAY.md`) |
@@ -110,7 +110,7 @@ apps/
         calendar/
           ics.ts                  # ★ dependency-free .ics builder
           service.ts              # ★ config, Resend send, 👍 booking, prompt enqueue
-        whatsapp/                 # adapter / realAdapter / manager / commands (★ + 👍) / outbox / format
+        whatsapp/                 # adapter / baileysAdapter / manager (★ activation gate) / commands (★ + 👍) / outbox / format
       platform/                   # db, config/env, logger, security/crypto, realtime/bus, ai/claude.ts (shared Claude client)
       shared/                     # time.ts (★ DST math), errors.ts
     test/                         # selection, auth, scheduling, worker, whatsapp, emoji, calendar, places, movies, entries
@@ -232,11 +232,16 @@ time, DST-aware via Luxon; `tick()` auto-selects (if due) and notifies (saved re
 or a reminder), both `JobRun`-guarded; only the CURRENT period is processed.
 
 **WhatsApp** (`features/whatsapp/*`): the **paired phone is the sender** (a
-"userbot" via whatsapp-web.js). Shared selection logic drives web + WhatsApp. Inbound
+"userbot" via **Baileys** — pure WebSocket, no Chromium; `baileysAdapter.ts` implements the
+library-agnostic `WhatsAppAdapter`). Shared selection logic drives web + WhatsApp. Inbound
 🔄/✅ reactions and REROLL/DONE replies are deduped, authorised, and guarded against
 superseded results. Outbox reconciles uncertain sends. **Currently the fixture
 adapter is active** (`WHATSAPP_ENABLED=false`) — messages are recorded, not delivered.
 Recipient numbers require a country code (E.164); Settings has a country-prefix picker.
+**Reminders are opt-in**: they never fire until the couple completes a one-time **activation**
+(phone recipient + linked WhatsApp session + calendar email). The reminder toggle is disabled
+until then (Settings shows a 3-step checklist); the worker + `updateCollection` both enforce
+the gate (`whatsapp.isActivated`), so nothing sends before setup is complete.
 
 **Calendar** (`features/calendar/*`): after a weekly pick, a second "📅 add to
 calendar?" WhatsApp message is enqueued (when configured); a **👍** on it — or the
@@ -256,7 +261,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 64 tests (needs our52_test DB, migrated)
+pnpm --filter @our52/server test          # 67 tests (needs our52_test DB, migrated)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
@@ -267,7 +272,7 @@ WhatsApp event dedup, **auto-emoji fallback**, **calendar .ics build + prompt en
 **OSM place search** (query builder + response mapper), **movie import** (best-match +
 AI-verdict reconcile + column-detection sanitizer + bulk poster/IMDb persistence),
 **entries** (either-partner delete + restore + couple isolation, available-only progress
-count, movie dedup on add/import, completion retiring every copy of a movie).
+count, movie dedup on add/import, completion retiring only the picked copy), empty-pool/removed-pick ghost guard, and WhatsApp reminder activation gating.
 
 If tests fail on missing columns, migrate the test DB:
 `cd apps/server && DATABASE_URL=postgresql://<you>@localhost:5432/our52_test pnpm exec prisma migrate deploy`
@@ -283,7 +288,7 @@ Integrations (all optional; features degrade gracefully):
 - `TMDB_API_KEY` — **SET** (v4 read-access token). Movie search/discover/posters/IMDb live.
 - `ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`, default Haiku 4.5) — **SET** → smart Excel movie matching + nicer auto-emojis. Unset → keyword-emoji + string-match fallback.
 - `RESEND_API_KEY` + `CALENDAR_FROM_EMAIL` — *not set* → calendar invites dormant.
-- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR`, `WHATSAPP_CHROME_PATH`.
+- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR` (Baileys multi-file auth). *(No Chrome path any more — Baileys needs no browser.)*
 
 In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 
@@ -292,8 +297,10 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 ## 9. Known gaps / what's NOT verified
 
 - **WhatsApp live delivery & reactions are UNVERIFIED** — no phone paired; the adapter
-  is fixture. To go live: `WHATSAPP_ENABLED=true`, restart, Settings → Connect → scan QR,
-  then Send test. It's an unofficial client (can disconnect; needs an always-on host).
+  is fixture. The **Baileys** adapter is coded + module-shape smoke-tested, but real
+  QR pairing/send needs a phone. To go live: `WHATSAPP_ENABLED=true`, restart, complete
+  activation in Settings (phone + Connect → scan QR + email), then Send test. Unofficial
+  client (can disconnect; needs an always-on host).
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
