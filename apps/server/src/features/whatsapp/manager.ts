@@ -20,12 +20,12 @@ async function syncStatus(coupleId: string, status: WAStatus, phone?: string, qr
 async function build(coupleId: string): Promise<WhatsAppAdapter> {
   if (env.WHATSAPP_ENABLED) {
     try {
-      const { RealWhatsAppAdapter } = await import("./realAdapter.js");
-      const a = new RealWhatsAppAdapter(coupleId);
+      const { BaileysWhatsAppAdapter } = await import("./baileysAdapter.js");
+      const a = new BaileysWhatsAppAdapter(coupleId);
       wire(a);
       return a;
     } catch (err) {
-      logger.error({ err: String(err) }, "Failed to load real WhatsApp adapter; using fixture");
+      logger.error({ err: String(err) }, "Failed to load Baileys WhatsApp adapter; using fixture");
     }
   }
   const fixture = new FixtureAdapter(coupleId);
@@ -82,7 +82,7 @@ export async function getStatus(coupleId: string) {
     groupId: config?.groupId ?? null,
     recipients: config ? safeArr(config.recipients) : [],
     note: env.WHATSAPP_ENABLED
-      ? "whatsapp-web.js is an unofficial client. It can disconnect or be blocked, and requires an always-on host. No paid subscription is needed."
+      ? "Baileys is an unofficial WhatsApp client (no browser needed). It can disconnect or be blocked, and requires an always-on host. No paid subscription is needed."
       : "WhatsApp is disabled (WHATSAPP_ENABLED=false). A fixture adapter is active; enable it and pair a phone in production.",
   };
 }

@@ -40,7 +40,6 @@ const schema = z.object({
   TMDB_IMAGE_BASE: z.string().default("https://image.tmdb.org/t/p"),
   WHATSAPP_ENABLED: bool(false),
   WHATSAPP_SESSION_DIR: z.string().default("./data/whatsapp"),
-  WHATSAPP_CHROME_PATH: z.string().optional().default(""),
   // Auto-emoji for date ideas (optional — falls back to a keyword map without it).
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   ANTHROPIC_MODEL: z.string().default("claude-haiku-4-5-20251001"),

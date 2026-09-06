@@ -37,8 +37,8 @@
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
-    "qrcode": "^1.5.4",
-    "whatsapp-web.js": "1.26.0"
+    "baileys": "7.0.0-rc14",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -1,7 +1,7 @@
 /**
  * WhatsApp adapter contract. Both the fixture adapter (tests / no-pairing) and
- * the real whatsapp-web.js adapter implement this, so the outbox, command
- * handler, and worker never depend on the concrete library.
+ * the real Baileys adapter implement this, so the outbox, command handler, and
+ * worker never depend on the concrete library.
  */
 
 export type WAStatus = "disconnected" | "qr" | "connecting" | "connected";
