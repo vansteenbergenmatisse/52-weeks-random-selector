@@ -11,7 +11,7 @@ WORKDIR /app
 # Install workspace deps (server only needs its own + root manifest).
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY apps/server/package.json apps/server/package.json
-RUN pnpm install --filter @our52/server... --prod=false
+RUN pnpm install --filter @our52/server... --prod=false --frozen-lockfile
 
 # App source
 COPY apps/server ./apps/server
