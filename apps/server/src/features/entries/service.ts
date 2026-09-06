@@ -102,6 +102,21 @@ export async function createEntry(
   const title = input.title?.trim();
   if (!title) throw Errors.badRequest("Title is required");
 
+  // A movie can only be in the pool once. If this TMDB title is already here
+  // (not watched, not deleted), return that entry instead of adding a duplicate.
+  if (collection.kind === "movies" && input.tmdbId != null) {
+    const existing = await prisma.entry.findFirst({
+      where: {
+        collectionId,
+        tmdbId: input.tmdbId,
+        deletedAt: null,
+        status: { in: ["available", "selected"] },
+      },
+      include: { contributor: true },
+    });
+    if (existing) return publicEntry(existing);
+  }
+
   // Movies keep null (poster art). Non-movie ideas get an auto-picked emoji
   // (Claude, or keyword fallback) unless one was explicitly supplied.
   const emoji =
@@ -141,14 +156,33 @@ export async function createEntriesBulk(
   items: EntryInput[],
 ) {
   const collection = await assertCollectionInCouple(collectionId, coupleId);
-  const clean = items
+  const isMovies = collection.kind === "movies";
+
+  let clean = items
     .map((i) => ({ ...i, title: i.title?.trim() ?? "" }))
     .filter((i) => i.title.length > 0)
     .slice(0, BULK_MAX);
   if (clean.length === 0) throw Errors.badRequest("Nothing to import — every row needs a title.");
 
+  // Keep each movie unique: drop rows whose TMDB title is already in the pool,
+  // and collapse duplicates within this import, so importing the same list twice
+  // never creates copies. Manual/text rows (no tmdbId) are always kept.
+  if (isMovies) {
+    const present = await prisma.entry.findMany({
+      where: { collectionId, deletedAt: null, status: { in: ["available", "selected"] }, tmdbId: { not: null } },
+      select: { tmdbId: true },
+    });
+    const seen = new Set<number>(present.map((e) => e.tmdbId!).filter((v): v is number => typeof v === "number"));
+    clean = clean.filter((i) => {
+      if (i.tmdbId == null) return true;
+      if (seen.has(i.tmdbId)) return false;
+      seen.add(i.tmdbId);
+      return true;
+    });
+    if (clean.length === 0) throw Errors.badRequest("Those movies are already in your pool.");
+  }
+
   // Auto-pick emojis in ONE batch call for non-movie ideas without an emoji.
-  const isMovies = collection.kind === "movies";
   const needEmoji = isMovies ? [] : clean.filter((i) => !i.emoji).map((i) => i.title);
   const picked = needEmoji.length ? await pickEmojis(needEmoji) : [];
   let pi = 0;

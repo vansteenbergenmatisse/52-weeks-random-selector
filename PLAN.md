@@ -16,7 +16,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: complete, running, tested.** 61 server tests pass; web build + server
+**Status: complete, running, tested.** 64 server tests pass; web build + server
 typecheck are green.
 
 ---
@@ -211,7 +211,7 @@ in a batch). Unticked rows are skipped entirely.
 how many are **currently in the pool** (available only — selected/completed/watched are excluded,
 so the number matches the visible cards). Deletion is **one-tap, no confirm**, and **either
 partner may remove any** movie/idea (e.g. "we watched it") — soft-delete backs an **Undo** toast
-(`POST /api/entries/:id/restore`). Editing stays owner-only.
+(`POST /api/entries/:id/restore`). Editing stays owner-only. Each **movie is unique** in a collection (dedup by `tmdbId` on add + bulk import; adding a dupe returns the existing entry). Marking a movie **completed retires every copy** of it (same `tmdbId`) from the pool, so a watched movie can't linger or be picked again.
 
 **Places / date discovery** (`places/osm.ts` + `PlaceFinder.tsx`): for date ideas, type
 an area ("Manhattan, New York") and pick a category (culture / food / drinks / adventure
@@ -251,7 +251,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 61 tests (needs our52_test DB, migrated)
+pnpm --filter @our52/server test          # 64 tests (needs our52_test DB, migrated)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```

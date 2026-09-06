@@ -237,7 +237,28 @@ export async function markCompleted(coupleId: string, collectionId: string) {
   await prisma.$transaction(async (tx) => {
     await tx.weeklyResult.update({ where: { id: result.id }, data: { completedAt: new Date() } });
     const entryId = result.revisions[0]?.entryId;
-    if (entryId) await tx.entry.updateMany({ where: { id: entryId }, data: { status: "completed" } });
+    if (entryId) {
+      const picked = await tx.entry.update({
+        where: { id: entryId },
+        data: { status: "completed" },
+        select: { tmdbId: true },
+      });
+      // A movie can be added more than once (duplicate imports). Once it's
+      // watched, take EVERY copy out of the pool so it can't be shown or picked
+      // again — completing one entry should retire the whole movie.
+      if (picked.tmdbId != null) {
+        await tx.entry.updateMany({
+          where: {
+            collectionId,
+            tmdbId: picked.tmdbId,
+            id: { not: entryId },
+            deletedAt: null,
+            status: { in: ["available", "selected"] },
+          },
+          data: { status: "completed" },
+        });
+      }
+    }
   });
   publish({ type: "result.changed", coupleId, collectionId });
   publish({ type: "entries.changed", coupleId, collectionId });
