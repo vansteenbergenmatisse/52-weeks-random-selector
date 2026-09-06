@@ -23,6 +23,9 @@ typecheck are green.
 
 ## 2. How to run / where to test
 
+- **Repo → https://github.com/vansteenbergenmatisse/52-weeks-random-selector** (`main`).
+  Secrets live only in the gitignored `apps/server/.env`; a fresh clone needs
+  `cp .env.example apps/server/.env` + your `DATABASE_URL` / `TMDB_API_KEY` / `ANTHROPIC_API_KEY`.
 - **Web app → http://localhost:5173**  ← test here
 - **API → http://localhost:4000** (health: `/api/health`)
 
@@ -140,7 +143,8 @@ apps/
       styles/index.css            # ★ warm theme tokens + per-user --accent vars
     tailwind.config.js            # ★ warm palette (no blue), accent via CSS var
     e2e/main-flow.spec.ts (teresa/matisse) · nginx.conf
-docs/visual-qa/ · Dockerfile.* · docker-compose.yml · .env.example · README.md · PLAN.md
+docs/visual-qa/ · docs/DEPLOY-RAILWAY.md · Dockerfile.* · apps/web/nginx.conf.template + docker-entrypoint.sh
+railway.server/web/worker.json (Railway Dockerfile builds) · docker-compose.yml · .env.example · README.md · PLAN.md
 ```
 
 `★` = files carrying the important/subtle logic.
@@ -178,7 +182,8 @@ Invariants & notable fields:
 **before** the client animates; uniform `crypto.randomInt`; `spin` fast-paths to a
 reveal and converges on the same result under a `unique(periodId)` conflict; `reroll`
 uses optimistic concurrency on `currentRevisionNumber`; `markCompleted` sets
-`completedAt` **and** flips the entry to `completed` (excluded from future draws).
+`completedAt` **and** flips the entry to `completed` — and for movies **retires every
+copy of that film** (same `tmdbId`), so a watched movie can't linger or be re-picked.
 Selected/completed entries are excluded from draws.
 
 **Carousel** (`Carousel.tsx`): launches at full speed (long fixed runway) and eases
@@ -258,7 +263,11 @@ pnpm --filter @our52/web build            # tsc + vite build
 Coverage: selection (spin/reveal/reroll/exclusion/uniformity/concurrency, completion),
 auth & couple isolation, invitation two-person cap, DST scheduling, worker restart
 idempotency + **result message contains the exact picked title (revision-tagged)**,
-WhatsApp event dedup, **auto-emoji fallback**, **calendar .ics build + prompt enqueue**.
+WhatsApp event dedup, **auto-emoji fallback**, **calendar .ics build + prompt enqueue**,
+**OSM place search** (query builder + response mapper), **movie import** (best-match +
+AI-verdict reconcile + column-detection sanitizer + bulk poster/IMDb persistence),
+**entries** (either-partner delete + restore + couple isolation, available-only progress
+count, movie dedup on add/import, completion retiring every copy of a movie).
 
 If tests fail on missing columns, migrate the test DB:
 `cd apps/server && DATABASE_URL=postgresql://<you>@localhost:5432/our52_test pnpm exec prisma migrate deploy`
@@ -288,17 +297,24 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
-- **Smart emoji unverified live** — needs `ANTHROPIC_API_KEY`; keyword fallback works now.
-- **Docker compose not executed** this session (built + typechecked only).
+- **Docker images not built** this session (no Docker available) — the Railway nginx
+  `$PORT` templating + entrypoint were validated by rendering, not a full image build;
+  confirm on the first Railway deploy.
+- **Railway deploy configured but not run** — `railway.*.json` + `docs/DEPLOY-RAILWAY.md`
+  are in the repo, but the services still need creating in the Railway dashboard.
+- **Anthropic live** ✅ — `ANTHROPIC_API_KEY` is set; smart Excel movie matching, column
+  detection, and auto-emoji are active and verified.
 
 ---
 
 ## 10. Suggested next steps
 
-1. Pair a real WhatsApp phone and verify live send + 🔄/✅/👍 round-trip (incl. calendar).
-2. Add `RESEND_API_KEY` + both email addresses → verify a real calendar invite lands.
-3. Add `ANTHROPIC_API_KEY` → confirm nicer auto-emojis on date ideas.
-4. `docker compose up --build` smoke test end-to-end.
+1. **Finish the Railway deploy** — follow `docs/DEPLOY-RAILWAY.md`: add Postgres, create
+   the **api** (config `railway.server.json`) and **web** (config `railway.web.json`)
+   services, **Generate Domain** on web, wire `API_UPSTREAM` + `CORS_ORIGINS`.
+2. Pair a real WhatsApp phone and verify live send + 🔄/✅/👍 round-trip (incl. calendar).
+3. Add `RESEND_API_KEY` + both email addresses → verify a real calendar invite lands.
+4. `docker compose up --build` smoke test end-to-end (validates the new web entrypoint).
 5. Custom collections UI (backend supports them; add a "＋ New collection" tab entry).
 6. Optional: import personal IMDb ratings via CSV export; multi-instance realtime
    (swap the in-process bus for Postgres LISTEN/NOTIFY or Redis) if scaling past one process.
