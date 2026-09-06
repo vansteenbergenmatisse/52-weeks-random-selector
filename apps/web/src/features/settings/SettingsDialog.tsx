@@ -223,6 +223,18 @@ export function SettingsDialog({
         <div className="border-t border-line pt-4 space-y-3">
           <h3 className="u-display text-sm text-ink">WhatsApp reminders (shared)</h3>
 
+          {/* Known issue banner: live WhatsApp pairing/sending is not working yet
+              (fixture adapter; real Baileys pairing + auto-reconnect unverified).
+              This is the next thing to fix — see PLAN.md §10. */}
+          <div className="rounded-lg border border-card-red/40 bg-card-red/10 p-3">
+            <p className="text-sm text-ink font-semibold">⚠️ WhatsApp connection isn&apos;t working yet</p>
+            <p className="text-xs text-muted mt-1">
+              Live WhatsApp pairing and reminders aren&apos;t functional right now, and the link can drop on
+              its own — fixing the connection (and keeping it connected) is the next task on our list. You can
+              still fill in the details below, but nothing will send until it&apos;s fixed.
+            </p>
+          </div>
+
           {/* One-time activation checklist — all three are required before the
               reminder toggle above unlocks. */}
           <div className="rounded-lg bg-panel-2 border border-line p-3">

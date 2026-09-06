@@ -16,18 +16,30 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: complete, running, tested.** 67 server tests pass; web build + server
-typecheck are green.
+**Status: LIVE on Railway, running, tested.** 65 server tests pass; web build + server
+typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
-**Latest session (2026-09-06, merged to `main` via PR #1):**
-- **Storage → SQLite** (single file, no DB service); worker runs **inline in the API**
-  (`RUN_WORKER`, default true). Deploy is now 2 services + a Volume at `/data`, no Postgres.
-- **WhatsApp → Baileys** (no Chromium) and reminders are **opt-in behind activation**
-  (phone + linked session + email), enforced in the worker, API, and a gated Settings toggle.
-- **Pool fixes:** an emptied pool no longer replays a "ghost" pick; watched movies are
-  removable; completing a movie retires only the picked copy.
-- **Railway:** api config renamed to `railway.json` (auto-detected); first deploy built +
-  started, pending env/Volume config (see §9).
+**⚠️ Top open task: the WhatsApp live connection does NOT work yet — see §10.**
+
+**Latest session (2026-09-06, on `main`):**
+- **Deployed to Railway as ONE service** — the Fastify API now serves the built web app as
+  static files with SPA fallback (`@fastify/static` in `server.ts`), so one service + one
+  domain + one Volume at `/data` hosts everything. The client uses relative `/api` paths →
+  same origin, no proxy/CORS. Root `Dockerfile` (multi-stage: build web → server serves it);
+  `DATABASE_URL=file:/data/our52.db`; `start:prod` runs migrate + seed on boot. The old
+  two-service split (`Dockerfile.server` + nginx `Dockerfile.web`) is now local-compose only.
+- **One-tap Teresa/Matisse login in production** — the login page leads with a two-person
+  picker (each in their own accent); password login is secondary. Gated on `DEMO_MODE=true`
+  (decoupled from `NODE_ENV`, since this is a private shared space). Both share one couple space.
+- **One spin per week — the pick is LOCKED.** Whoever spins first (or the Sunday auto-spin)
+  decides the week; it's final and identical for both. **Reroll is disabled** server-side
+  (web + WhatsApp 🔄) and its button removed. The pick now **shows immediately on login**
+  (no "reveal" click); the result card notes "picked automatically" for auto-spins.
+
+**Earlier session (2026-09-06, merged via PR #1):**
+- **Storage → SQLite** (single file, no DB service); worker runs **inline in the API**.
+- **WhatsApp → Baileys** (no Chromium); reminders **opt-in behind activation**.
+- **Pool fixes:** emptied pool no ghost pick; watched movies removable; complete retires one copy.
 
 ---
 
@@ -192,8 +204,10 @@ Invariants & notable fields:
 ## 6. Core behaviours (the subtle parts)
 
 **Selection** (`features/selection/service.ts`): server picks + persists the winner
-**before** the client animates; uniform `crypto.randomInt`; `reroll` uses optimistic
-concurrency on `currentRevisionNumber`; `markCompleted` sets `completedAt` **and**
+**before** the client animates; uniform `crypto.randomInt`. **One spin per week — the pick
+is LOCKED once decided** (first spin or the Sunday auto-spin); concurrent spins converge on
+ONE result via `unique(periodId)`, and `reroll()` is a **no-op returning `reason:"locked"`**
+(reroll is disabled for both web and WhatsApp 🔄). `markCompleted` sets `completedAt` **and**
 flips the picked entry to `completed` (**only that copy** — other copies of the same
 movie stay for a re-watch). Selected/completed entries are excluded from draws.
 **Pool is the source of truth:** a weekly result only shows if its pick is still a
@@ -280,7 +294,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 67 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 65 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
@@ -311,32 +325,30 @@ Integrations (all optional; features degrade gracefully):
 - `RESEND_API_KEY` + `CALENDAR_FROM_EMAIL` — *not set* → calendar invites dormant.
 - `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR` (Baileys multi-file auth). *(No Chrome path any more — Baileys needs no browser.)*
 
-In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
+In production set a real `SESSION_SECRET`. **`DEMO_MODE=true` is intentionally ON in prod**
+(private shared space) so the one-tap Teresa/Matisse login works; the demo gate is decoupled
+from `NODE_ENV` (`demoEnabled = env.DEMO_MODE`).
 
 ---
 
 ## 9. Known gaps / what's NOT verified
 
-- **WhatsApp live delivery & reactions are UNVERIFIED** — no phone paired; the adapter
-  is fixture. The **Baileys** adapter is coded + module-shape smoke-tested, but real
-  QR pairing/send needs a phone. To go live: `WHATSAPP_ENABLED=true`, restart, complete
-  activation in Settings (phone + Connect → scan QR + email), then Send test. Unofficial
-  client (can disconnect; needs an always-on host).
+- **⚠️ WhatsApp live connection DOES NOT WORK (top open task — see §10)** — no phone paired;
+  the adapter is fixture. The **Baileys** adapter is coded + module-shape smoke-tested, but
+  real QR pairing/send is unverified, disconnects aren't recovered, and session persistence
+  on the `/data` Volume isn't confirmed. Settings shows a "connection isn't working yet"
+  banner. Unofficial client (can drop; needs an always-on host + reconnect).
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
-- **Docker images not built** this session (no Docker available) — the Dockerfile steps
-  were validated indirectly (frozen-lockfile install, `prisma generate`, tsc, web build,
-  and a live `tsx` boot on SQLite); confirm the actual image build on the first deploy.
-- **Railway deploy in progress** — the first deploy **built and started** (Baileys +
-  lockfile + Dockerfile all fine); it then failed only on a missing runtime env var
-  (`DATABASE_URL`). With SQLite the fix is: one **app** service with a **Volume at `/data`**
-  and `DATABASE_URL=file:/data/our52.db` (+ `SESSION_SECRET`, `APP_BASE_URL`, `CORS_ORIGINS`,
-  keys) plus the **web** service (Config Path `railway.web.json`, Generate Domain). No
-  Postgres/worker service. See `docs/DEPLOY-RAILWAY.md`.
-- **Verified locally on SQLite** ✅ — full app runs (`pnpm dev`): login, collections,
-  spin/reroll/complete, inline worker, and the WhatsApp activation gating all work against
-  the SQLite file. Only live WhatsApp pairing + the hosted Railway image remain to confirm.
+- **Railway deploy DONE** ✅ — live at the URL in §1 as **one service** (API serves the web
+  app) built from the root `Dockerfile`, with a Volume at `/data`,
+  `DATABASE_URL=file:/data/our52.db`, and `SESSION_SECRET`/`APP_BASE_URL`/`CORS_ORIGINS`/keys
+  set. Kept at **one replica** (SQLite + in-process live-sync). `start:prod` migrates + seeds
+  on boot; verified live (`/api/health` 200, login + locked pick + shared space all work).
+- **Verified on the live deploy** ✅ — one-tap login, collections, spin → locked pick shown
+  on login, inline worker, same-origin `/api` + SSE all work. Live WhatsApp pairing is the
+  only remaining unverified core path (see the WhatsApp gap above).
 - **Anthropic live** ✅ — `ANTHROPIC_API_KEY` is set; smart Excel movie matching, column
   detection, and auto-emoji are active and verified.
 
@@ -344,15 +356,35 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 
 ## 10. Suggested next steps
 
-1. **Finish the Railway deploy** — follow `docs/DEPLOY-RAILWAY.md`: two services, no
-   database. Create the **app** (auto-detects root `railway.json`; add a **Volume** at
-   `/data` and set `DATABASE_URL=file:/data/our52.db`) and **web** (set Config Path to
-   `railway.web.json`), **Generate Domain** on web, wire `API_UPSTREAM` + `CORS_ORIGINS`.
-   Keep the app at **one replica** (SQLite + in-process live-sync).
-2. Pair a real WhatsApp phone and verify live send + 🔄/✅/👍 round-trip (incl. calendar).
-3. Add `RESEND_API_KEY` + both email addresses → verify a real calendar invite lands.
-4. `docker compose up --build` smoke test end-to-end (validates the new web entrypoint).
-5. Custom collections UI (backend supports them; add a "＋ New collection" tab entry).
-6. Optional: import personal IMDb ratings via CSV export; multi-instance realtime
-   (swap the in-process bus for Postgres LISTEN/NOTIFY or Redis) if scaling past one process.
-```
+> Deploy is done (§1 — one Railway service, live). The priority now is **WhatsApp**.
+
+### ⚠️ NEXT TASK TO FIX — WhatsApp connection (does NOT work today)
+The live WhatsApp connection isn't working (fixture adapter; real Baileys pairing/sending
+never verified — no phone paired). Settings shows a "⚠️ WhatsApp connection isn't working
+yet" banner. To make it real:
+
+1. **Get a real WhatsApp connection working** — set `WHATSAPP_ENABLED=true`, verify Baileys
+   QR pairing + live send/receive with a real phone, and persist the session in
+   `WHATSAPP_SESSION_DIR` **on the `/data` Volume** so it survives redeploys.
+2. **Fix automatic disconnects** — Baileys drops on its own; add robust reconnect
+   (exponential backoff, session re-use) so the link stays up on an always-on host.
+3. **Reconnect prompt/pop-up** — when WhatsApp is disconnected, surface a pop-up to reconnect
+   (scan QR). If it disconnects again, prompt to re-link; a message can only be sent once
+   connected. **Requirement: WhatsApp must be connected to use it** (SCOPE TO CONFIRM: whole
+   app vs. just weekly reminders — currently the app degrades gracefully without WhatsApp).
+4. **Activation form** — user enters their **name + phone + email**, and can **pre-fill the
+   partner's email and phone** for them. (TODO: confirm what happens once it's filled in —
+   e.g. notify/invite the partner, or just save + attempt connect.)
+
+### ✅ MANDATORY before launch/use — full system bug review
+Run a **10-agent system-wide bug hunt** (deploy 10 area-focused agents to find issues/bugs
+across the whole system, then adversarially verify each finding) and fix everything real it
+surfaces. This is a **required gate** before the app is considered usable. (Kicked off this
+session; see the review output / `REVIEW.md`.)
+
+### Later / optional
+5. Add `RESEND_API_KEY` + both emails → verify a real calendar invite lands.
+6. `docker compose up --build` smoke test (validates the local two-service compose path).
+7. Custom collections UI (backend supports them; add a "＋ New collection" tab entry).
+8. Import personal IMDb ratings via CSV; multi-instance realtime (swap in-process bus for
+   Postgres LISTEN/NOTIFY or Redis) only if scaling past one process.
