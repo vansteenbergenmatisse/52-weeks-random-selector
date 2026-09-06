@@ -67,7 +67,7 @@ docker compose up --build  # app → http://localhost:8080
 | WhatsApp  | `whatsapp-web.js` (unofficial, free) — **optional**, currently fixture |
 | Calendar  | `.ics` invites emailed via **Resend** — **optional**, dormant until keyed |
 | Tests     | Vitest (unit/integration, real DB) |
-| Delivery  | Docker Compose: db + migrate + server + worker + web(nginx) |
+| Delivery  | Docker Compose (local); **Railway** via `railway.*.json` + Dockerfiles (see `docs/DEPLOY-RAILWAY.md`) |
 
 Package manager: **pnpm workspace** (`apps/server`, `apps/web`). The server runs
 via `tsx` in dev *and* prod. Relative imports use `.js` extensions. The app runs

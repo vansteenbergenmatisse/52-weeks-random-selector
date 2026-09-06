@@ -11,6 +11,13 @@ COPY apps/web ./apps/web
 RUN pnpm --filter @our52/web build
 
 FROM nginx:1.27-alpine
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+# envsubst (from gettext) renders the config at start-up so we can bind $PORT.
+RUN apk add --no-cache gettext
+COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY apps/web/docker-entrypoint.sh /docker-entrypoint.sh
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+RUN chmod +x /docker-entrypoint.sh
+# Defaults for docker-compose; Railway overrides PORT (and you set API_UPSTREAM).
+ENV PORT=80 API_UPSTREAM=server:4000
 EXPOSE 80
+ENTRYPOINT ["/docker-entrypoint.sh"]
