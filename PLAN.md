@@ -144,7 +144,7 @@ apps/
     tailwind.config.js            # ★ warm palette (no blue), accent via CSS var
     e2e/main-flow.spec.ts (teresa/matisse) · nginx.conf
 docs/visual-qa/ · docs/DEPLOY-RAILWAY.md · Dockerfile.* · apps/web/nginx.conf.template + docker-entrypoint.sh
-railway.server/web/worker.json (Railway Dockerfile builds) · docker-compose.yml · .env.example · README.md · PLAN.md
+railway.json (api, auto-detected) + railway.web/worker.json (set Config Path) · docker-compose.yml · .env.example · README.md · PLAN.md
 ```
 
 `★` = files carrying the important/subtle logic.
@@ -310,7 +310,7 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 ## 10. Suggested next steps
 
 1. **Finish the Railway deploy** — follow `docs/DEPLOY-RAILWAY.md`: add Postgres, create
-   the **api** (config `railway.server.json`) and **web** (config `railway.web.json`)
+   the **api** (auto-detects root `railway.json`) and **web** (set Config Path to `railway.web.json`)
    services, **Generate Domain** on web, wire `API_UPSTREAM` + `CORS_ORIGINS`.
 2. Pair a real WhatsApp phone and verify live send + 🔄/✅/👍 round-trip (incl. calendar).
 3. Add `RESEND_API_KEY` + both email addresses → verify a real calendar invite lands.

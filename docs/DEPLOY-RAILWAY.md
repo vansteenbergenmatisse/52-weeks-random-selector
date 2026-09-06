@@ -3,19 +3,45 @@
 Railway's auto-builder (Railpack) can't build this repo directly — it's a **pnpm
 monorepo with two packages and no single root start command**, which is exactly
 the `✖ No start command detected` error. The fix is to run each piece as its own
-Railway **service built from the existing Dockerfiles**, using the `railway.*.json`
-config files in the repo root.
+Railway **service built from the existing Dockerfiles**.
 
-You deploy **3–4 services** in one Railway project:
+> **The gotcha that causes the Railpack error:** Railway only *auto-detects* a
+> config file named **`railway.json`** (or `railway.toml`) at the repo root.
+> Custom names like `railway.web.json` are **ignored** unless you set that path in
+> the service's **Config Path** field. If it's not set, the service silently falls
+> back to Railpack → `No start command detected`.
 
-| Service   | Config file (set as the service's Config Path) | Public domain? |
-|-----------|------------------------------------------------|----------------|
-| Postgres  | (Railway managed database — add from the UI)   | no             |
-| **api**   | `railway.server.json`                          | optional       |
-| **web**   | `railway.web.json`                             | **yes** ← the app URL |
-| worker    | `railway.worker.json` (optional — scheduling/WhatsApp) | no     |
+So the **api** config is named `railway.json` (auto-detected — nothing to configure).
+The other two services use custom-named files and **must** have their Config Path set:
 
-Each config file pins `builder: DOCKERFILE`, so Railpack is bypassed.
+| Service   | Config file                       | Config Path needed?          | Public domain? |
+|-----------|-----------------------------------|------------------------------|----------------|
+| Postgres  | (Railway managed DB — add in UI)  | —                            | no             |
+| **api**   | `railway.json`                    | **no** (auto-detected)       | optional       |
+| **web**   | `railway.web.json`                | **yes** → set the path       | **yes** ← the app URL |
+| worker    | `railway.worker.json` (optional)  | **yes** → set the path       | no             |
+
+Each config file pins `builder: DOCKERFILE`, so Railpack is bypassed once it's read.
+
+> ⚠️ Because `railway.json` is auto-detected, **any** service that doesn't have its
+> Config Path set will build the *api* image (Dockerfile.server). Always set the
+> web and worker services' Config Path so they build the right Dockerfile.
+
+## Deterministic alternative (CLI) — if the Config Path field won't stick
+
+Setting the builder directly on a service bypasses config-file detection entirely.
+Link the project once (`railway link`), then per service:
+
+```bash
+railway environment edit --service-config web build.builder DOCKERFILE
+railway environment edit --service-config web build.dockerfilePath Dockerfile.web
+# worker:
+railway environment edit --service-config worker build.builder DOCKERFILE
+railway environment edit --service-config worker build.dockerfilePath Dockerfile.server
+railway environment edit --service-config worker deploy.startCommand "pnpm start:worker"
+```
+
+The **api** service needs none of this — it reads `railway.json` automatically.
 
 ---
 
@@ -26,7 +52,8 @@ In the project: **New → Database → PostgreSQL**. It exposes a `DATABASE_URL`
 
 ### 2. api service
 - **New → GitHub Repo** → pick this repo.
-- Settings → **Config-as-code / Railway Config File** → set path to `railway.server.json`.
+- Nothing to configure for the builder: Railway auto-detects `railway.json` and
+  builds `Dockerfile.server`. (No Config Path needed for this service.)
 - Settings → Networking → set the service **PORT variable to `4000`** (so internal
   networking is deterministic — the API binds `process.env.PORT`).
 - Variables:
@@ -67,8 +94,12 @@ Only needed for **automatic** weekly picks + reminders (manual spinning works wi
 ---
 
 ## Why it was failing
-- **"No start command detected"** — Railpack tried to build the workspace root. The
-  `railway.*.json` files switch each service to its Dockerfile build.
+- **"No start command detected"** — Railpack tried to build the workspace root
+  because no config file was being read. Railway only auto-detects a root
+  **`railway.json`**; the old `railway.server.json` name was ignored unless its
+  Config Path was set. Renaming the api config to `railway.json` makes it
+  auto-detected, and the web/worker configs switch their services to Dockerfile
+  builds once their Config Path is set (or via the CLI method above).
 - **"Unexposed service"** — a service has no public URL until you **Generate Domain**,
   and the container must listen on Railway's injected `$PORT`. The web image now binds
   `$PORT` (was hardcoded to `80`); the api already used `$PORT`.
