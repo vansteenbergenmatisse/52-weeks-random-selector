@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../platform/db/prisma.js";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../../platform/security/crypto.js";
 import { Errors } from "../../shared/errors.js";
-import { env } from "../../platform/config/env.js";
+import { demoEnabled, env } from "../../platform/config/env.js";
 import { createDefaultCollections } from "../collections/service.js";
 
 const SESSION_TTL_DAYS = 30;
@@ -65,8 +65,8 @@ export async function login(input: {
   const ok = user ? await verifyPassword(input.password, user.passwordHash) : false;
   if (!user || !ok) throw Errors.unauthorized("Invalid username or password");
 
-  // Demo accounts are only usable when demo mode is enabled.
-  if (user.isDemo && !(env.DEMO_MODE && env.NODE_ENV !== "production")) {
+  // The one-tap Teresa/Matisse accounts are only usable when demo mode is on.
+  if (user.isDemo && !demoEnabled) {
     throw Errors.forbidden("Demo accounts are disabled");
   }
   const token = await createSession(user.id);

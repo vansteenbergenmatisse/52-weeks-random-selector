@@ -66,8 +66,11 @@ export const env = parsed.data;
 export const isProd = env.NODE_ENV === "production";
 export const isTest = env.NODE_ENV === "test";
 
-/** Demo credentials are only honored when NOT production and DEMO_MODE is on. */
-export const demoEnabled = env.DEMO_MODE && env.NODE_ENV !== "production";
+/**
+ * One-tap "space" accounts (Teresa & Matisse). This is a private shared space,
+ * so we intentionally allow it in production too — gated only by DEMO_MODE.
+ */
+export const demoEnabled = env.DEMO_MODE;
 
 export const corsOrigins = env.CORS_ORIGINS.split(",")
   .map((s) => s.trim())

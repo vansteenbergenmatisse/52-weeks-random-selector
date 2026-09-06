@@ -10,7 +10,7 @@ import {
   requireUser,
   setSessionCookie,
 } from "../http.js";
-import { env, isProd } from "../../platform/config/env.js";
+import { demoEnabled, isProd } from "../../platform/config/env.js";
 
 // Strict limits protect production; generous in dev/test so suites don't trip.
 const REG_LIMIT = { max: isProd ? 10 : 1000, timeWindow: "10 minutes" };
@@ -57,12 +57,11 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/auth/me", async (req, reply) => {
-    const demoMode = env.DEMO_MODE && env.NODE_ENV !== "production";
     const user = await currentUser(req);
-    if (!user) return reply.send({ user: null, couple: null, demoMode });
+    if (!user) return reply.send({ user: null, couple: null, demoMode: demoEnabled });
     const couple = await auth.getCoupleForUser(user.id);
     const members = couple ? await auth.getMembers(couple.coupleId) : [];
-    return reply.send({ user, couple, members, demoMode: env.DEMO_MODE && env.NODE_ENV !== "production" });
+    return reply.send({ user, couple, members, demoMode: demoEnabled });
   });
 
   app.patch("/api/auth/profile", async (req, reply) => {

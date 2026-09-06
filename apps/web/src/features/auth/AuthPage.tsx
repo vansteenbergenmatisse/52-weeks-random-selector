@@ -4,8 +4,43 @@ import { api, ApiError } from "../../platform/api/client";
 import { useAuth } from "./useAuth";
 import { Wordmark } from "../../components/ui/Wordmark";
 
+/** One person in the shared space — tap to enter as them. */
+function PersonCard({
+  user,
+  emoji,
+  name,
+  busy,
+  onPick,
+}: {
+  user: string;
+  emoji: string;
+  name: string;
+  busy: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-user={user}
+      onClick={onPick}
+      disabled={busy}
+      aria-label={`Enter as ${name}`}
+      className="group flex flex-col items-center gap-3 rounded-xl bg-panel-3 border border-line py-6 transition hover:border-accent hover:-translate-y-0.5 active:scale-95 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    >
+      <span
+        aria-hidden="true"
+        className="grid place-items-center w-16 h-16 rounded-full bg-panel-2 border border-line text-3xl transition group-hover:border-accent"
+      >
+        {emoji}
+      </span>
+      <span className="u-display text-lg text-ink transition group-hover:text-accent">{name}</span>
+    </button>
+  );
+}
+
 export function AuthPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -14,6 +49,10 @@ export function AuthPage() {
   const [busy, setBusy] = useState(false);
   const { refresh, demoMode } = useAuth();
   const navigate = useNavigate();
+
+  // When the shared-space picker is available it leads; the password form is
+  // opt-in behind a link. Without demo mode, the form is the only way in.
+  const showForm = !demoMode || showPasswordForm;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,7 +73,7 @@ export function AuthPage() {
     }
   }
 
-  async function demoLogin(u: string) {
+  async function pick(u: string) {
     setError(null);
     setBusy(true);
     try {
@@ -42,7 +81,7 @@ export function AuthPage() {
       refresh();
       navigate("/app");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Demo login failed");
+      setError(err instanceof ApiError ? err.message : "Couldn't open the space");
     } finally {
       setBusy(false);
     }
@@ -55,77 +94,88 @@ export function AuthPage() {
           <Wordmark />
         </div>
         <div className="p-6">
-          <h1 className="u-display text-2xl text-ink mb-1">
-            {mode === "login" ? "Welcome back" : "Start your 52"}
-          </h1>
-          <p className="text-muted text-sm mb-5">
-            {mode === "login"
-              ? "Sign in to your shared space."
-              : "Create your space — 52 weeks of dates & movies await."}
-          </p>
-
-          <form onSubmit={submit} className="space-y-3">
-            <input
-              className="field"
-              placeholder="Username"
-              value={username}
-              autoCapitalize="none"
-              onChange={(e) => setUsername(e.target.value)}
-              aria-label="Username"
-            />
-            <input
-              className="field"
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-label="Password"
-            />
-            {mode === "register" && (
-              <>
-                <input
-                  className="field"
-                  placeholder="Your display name (e.g. Alex)"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  aria-label="Display name"
-                />
-                <input
-                  className="field"
-                  placeholder="Name your space (e.g. Alex & Sam)"
-                  value={coupleName}
-                  onChange={(e) => setCoupleName(e.target.value)}
-                  aria-label="Space name"
-                />
-              </>
-            )}
-            {error && <p className="text-card-red text-sm">{error}</p>}
-            <button className="btn-yellow w-full" disabled={busy} type="submit">
-              {busy ? "…" : mode === "login" ? "Sign in" : "Create space"}
-            </button>
-          </form>
-
-          <button
-            className="mt-4 text-sm text-muted hover:text-ink transition"
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
-          >
-            {mode === "login" ? "New here? Create a space" : "Already have an account? Sign in"}
-          </button>
-
           {demoMode && (
-            <div className="mt-6 pt-5 border-t border-line">
-              <p className="u-label mb-2">Who's spinning?</p>
-              <div className="flex gap-2">
-                <button className="flex-1 rounded-lg bg-panel-3 border border-line py-3 text-base hover:border-accent transition" onClick={() => demoLogin("teresa")} disabled={busy}>
-                  🌸 Teresa
-                </button>
-                <button className="flex-1 rounded-lg bg-panel-3 border border-line py-3 text-base hover:border-accent transition" onClick={() => demoLogin("matisse")} disabled={busy}>
-                  🎨 Matisse
-                </button>
+            <div className={showForm ? "mb-6" : ""}>
+              <h1 className="u-display text-2xl text-ink mb-1">Who's here?</h1>
+              <p className="text-muted text-sm mb-5">
+                Tap in — everything you both add stays in the same space, in sync.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <PersonCard user="teresa" emoji="🌸" name="Teresa" busy={busy} onPick={() => pick("teresa")} />
+                <PersonCard user="matisse" emoji="🎨" name="Matisse" busy={busy} onPick={() => pick("matisse")} />
               </div>
-              <p className="text-faint text-xs mt-2">One tap, no password. You both share the same space.</p>
+              {!showForm && (
+                <button
+                  className="mt-4 text-sm text-muted hover:text-ink transition"
+                  onClick={() => setShowPasswordForm(true)}
+                >
+                  Use a password instead
+                </button>
+              )}
             </div>
           )}
+
+          {showForm && (
+            <div className={demoMode ? "pt-5 border-t border-line" : ""}>
+              <h1 className="u-display text-2xl text-ink mb-1">
+                {mode === "login" ? "Welcome back" : "Start your 52"}
+              </h1>
+              <p className="text-muted text-sm mb-5">
+                {mode === "login"
+                  ? "Sign in to your shared space."
+                  : "Create your space — 52 weeks of dates & movies await."}
+              </p>
+
+              <form onSubmit={submit} className="space-y-3">
+                <input
+                  className="field"
+                  placeholder="Username"
+                  value={username}
+                  autoCapitalize="none"
+                  onChange={(e) => setUsername(e.target.value)}
+                  aria-label="Username"
+                />
+                <input
+                  className="field"
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  aria-label="Password"
+                />
+                {mode === "register" && (
+                  <>
+                    <input
+                      className="field"
+                      placeholder="Your display name (e.g. Alex)"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      aria-label="Display name"
+                    />
+                    <input
+                      className="field"
+                      placeholder="Name your space (e.g. Alex & Sam)"
+                      value={coupleName}
+                      onChange={(e) => setCoupleName(e.target.value)}
+                      aria-label="Space name"
+                    />
+                  </>
+                )}
+                <button className="btn-yellow w-full" disabled={busy} type="submit">
+                  {busy ? "…" : mode === "login" ? "Sign in" : "Create space"}
+                </button>
+              </form>
+
+              <button
+                className="mt-4 text-sm text-muted hover:text-ink transition"
+                onClick={() => setMode(mode === "login" ? "register" : "login")}
+              >
+                {mode === "login" ? "New here? Create a space" : "Already have an account? Sign in"}
+              </button>
+            </div>
+          )}
+
+          {error && <p className="text-card-red text-sm mt-4">{error}</p>}
         </div>
       </div>
     </div>

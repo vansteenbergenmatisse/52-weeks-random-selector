@@ -10,13 +10,14 @@
   --accent-glow: rgba(255, 107, 129, 0.3);
 }
 
-/* Per-person warm accents (set via data-user on <html>). */
-:root[data-user="teresa"] {
+/* Per-person warm accents. Set on <html> for app-wide theming, and also on the
+   login picker cards so each person shows their own accent before signing in. */
+[data-user="teresa"] {
   --accent: #ff7aa9;
   --accent-deep: #e05687;
   --accent-glow: rgba(255, 122, 169, 0.32);
 }
-:root[data-user="matisse"] {
+[data-user="matisse"] {
   --accent: #ff9a5b;
   --accent-deep: #e07536;
   --accent-glow: rgba(255, 154, 91, 0.32);
