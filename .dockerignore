@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+**/build
+.git
+.env
+**/.env
+apps/server/.wwebjs_auth
+apps/server/.wwebjs_cache
+apps/server/data
+apps/web/test-results
+apps/web/playwright-report
+docs/visual-qa/screenshots

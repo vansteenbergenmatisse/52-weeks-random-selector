@@ -1,0 +1,28 @@
+{
+  "name": "our52",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Our 52 — a private couples activity roulette (Dates & Movies)",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "db:migrate": "pnpm --filter @our52/server run db:migrate",
+    "db:seed": "pnpm --filter @our52/server run db:seed",
+    "db:reset": "pnpm --filter @our52/server run db:reset",
+    "test": "pnpm -r run test",
+    "test:e2e": "pnpm --filter @our52/web run test:e2e",
+    "lint": "pnpm -r run lint"
+  }
+}

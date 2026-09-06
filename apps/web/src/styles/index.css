@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  /* Warm "fun love" accent. Overridden per logged-in person below. */
+  --accent: #ff6b81;
+  --accent-deep: #d64a63;
+  --accent-glow: rgba(255, 107, 129, 0.3);
+}
+
+/* Per-person warm accents (set via data-user on <html>). */
+:root[data-user="teresa"] {
+  --accent: #ff7aa9;
+  --accent-deep: #e05687;
+  --accent-glow: rgba(255, 122, 169, 0.32);
+}
+:root[data-user="matisse"] {
+  --accent: #ff9a5b;
+  --accent-deep: #e07536;
+  --accent-glow: rgba(255, 154, 91, 0.32);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #17110f;
+  color: theme("colors.ink");
+  font-family: theme("fontFamily.sans");
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Warm, muted sunset/berry backdrop — lovely, not loud, and never blue. */
+.app-backdrop {
+  background:
+    radial-gradient(1100px 800px at 18% 18%, rgba(255, 160, 140, 0.28), transparent 60%),
+    radial-gradient(1100px 900px at 82% 85%, rgba(200, 90, 130, 0.3), transparent 62%),
+    linear-gradient(140deg, #5f2838 0%, #8a3f46 55%, #3f1c33 100%);
+}
+
+@layer components {
+  .u-display {
+    font-family: theme("fontFamily.display");
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .u-label {
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: theme("colors.muted");
+  }
+  .btn-yellow {
+    @apply u-display font-bold text-header bg-accent rounded-md px-8 py-3 text-lg;
+    box-shadow: 0 6px 0 0 theme("colors.accent-deep"), 0 12px 24px -6px rgba(0, 0, 0, 0.6);
+    transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  }
+  .btn-yellow:hover {
+    filter: brightness(1.05);
+  }
+  .btn-yellow:active {
+    transform: translateY(3px);
+    box-shadow: 0 3px 0 0 theme("colors.accent-deep"), 0 6px 12px -6px rgba(0, 0, 0, 0.6);
+  }
+  .btn-yellow:disabled {
+    @apply opacity-50 cursor-not-allowed;
+    box-shadow: 0 6px 0 0 theme("colors.accent-deep");
+  }
+  .field {
+    @apply w-full rounded-md bg-panel-3 border border-line px-3 py-2 text-ink placeholder:text-faint;
+    outline: none;
+  }
+  .field:focus {
+    border-color: theme("colors.accent");
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+}
+
+/* Respect reduced-motion for the whole app. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Thin scrollbars in dark surfaces */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2d35;
+  border-radius: 8px;
+}

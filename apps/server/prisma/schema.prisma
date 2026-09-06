@@ -1,0 +1,310 @@
+// Our 52 — data model
+// Concurrency-sensitive invariants are enforced with unique constraints
+// and transactions (see src/features/selection). See README for the model map.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Identity ────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  avatarUrl    String?
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  memberships     Membership[]
+  sessions        Session[]
+  entries         Entry[]
+  invitesCreated  Invitation[] @relation("InviteCreator")
+  resultRevisions ResultRevision[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ── Couple space ────────────────────────────────────────────────────
+
+model Couple {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  memberships    Membership[]
+  invitations    Invitation[]
+  collections    Collection[]
+  whatsappSession WhatsAppSession?
+  whatsappConfig  WhatsAppConfig?
+  calendarConfig  CalendarConfig?
+  outboundMessages OutboundMessage[]
+  processedEvents ProcessedInboundEvent[]
+}
+
+model Membership {
+  id       String   @id @default(cuid())
+  coupleId String
+  userId   String
+  role     String   @default("member") // "owner" | "member"
+  joinedAt DateTime @default(now())
+
+  couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // A user belongs to a couple at most once; enforces the 2-person cap
+  // together with an application-level count check inside a transaction.
+  @@unique([coupleId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id              String    @id @default(cuid())
+  coupleId        String
+  tokenHash       String    @unique
+  createdByUserId String
+  expiresAt       DateTime
+  usedAt          DateTime?
+  usedByUserId    String?
+  createdAt       DateTime  @default(now())
+
+  couple    Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("InviteCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([coupleId])
+}
+
+// ── Collections & entries ───────────────────────────────────────────
+
+model Collection {
+  id       String @id @default(cuid())
+  coupleId String
+  name     String
+  kind     String @default("custom") // "dates" | "movies" | "custom"
+  emoji    String @default("🎲")
+  colorKey String @default("charcoal")
+
+  targetPerPerson Int @default(26)
+
+  // Scheduling (IANA timezone, DST-aware; never a hardcoded offset)
+  autoSelect       Boolean @default(false)
+  scheduleWeekday  Int     @default(0)          // 0 = Sunday
+  scheduleTime     String  @default("20:00")    // local HH:mm
+  scheduleTimezone String  @default("America/New_York")
+
+  // Notifications (independent of selection)
+  notifyEnabled  Boolean @default(false)
+  notifyWeekday  Int?    // null => follow selection schedule
+  notifyTime     String?
+  notifyTimezone String?
+
+  // Cycle anchor: first Sunday (or configured weekday) that week 1 starts on.
+  cycleStartDate DateTime?
+  cycleIndex     Int      @default(1)
+
+  createdAt DateTime @default(now())
+
+  couple  Couple         @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  entries Entry[]
+  periods WeeklyPeriod[]
+  outboundMessages OutboundMessage[]
+
+  @@index([coupleId])
+}
+
+model Entry {
+  id             String  @id @default(cuid())
+  collectionId   String
+  contributorId  String
+  title          String
+  description    String?
+  emoji          String?
+  location       String? // optional place for the activity; also used as the calendar event location
+  cost           String? // optional rough cost band: free | $ | $$ | $$$
+  prep           String? // optional "what to prepare" note, distinct from description
+  status         String  @default("available") // available | selected | completed
+
+  // Movie metadata (optional)
+  tmdbId       Int?
+  imdbId       String?
+  posterPath   String?
+  backdropPath String?
+  releaseYear  Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete; historical snapshots are preserved on revisions
+
+  collection  Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  contributor User       @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  revisions   ResultRevision[]
+
+  @@index([collectionId])
+  @@index([contributorId])
+}
+
+// ── Weekly periods & results ────────────────────────────────────────
+
+model WeeklyPeriod {
+  id           String   @id @default(cuid())
+  collectionId String
+  cycleIndex   Int
+  weekIndex    Int      // 1..52 within the cycle (NOT ISO calendar week)
+  periodStart  DateTime // UTC instant the week begins (the scheduled draw)
+  periodEnd    DateTime // UTC instant the next week begins
+  scheduledAt  DateTime // UTC instant the draw/notify is due
+  createdAt    DateTime @default(now())
+
+  collection Collection    @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  result     WeeklyResult?
+
+  // One canonical period per (collection, cycle, week).
+  @@unique([collectionId, cycleIndex, weekIndex])
+  @@index([collectionId])
+}
+
+model WeeklyResult {
+  id                    String    @id @default(cuid())
+  periodId              String    @unique // one canonical result per period
+  collectionId          String
+  currentRevisionNumber Int       @default(1)
+  completedAt           DateTime?
+  calendarInvitedAt     DateTime? // set once a calendar invite has been emailed (idempotency)
+  createdAt             DateTime  @default(now())
+
+  period    WeeklyPeriod     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  revisions ResultRevision[]
+
+  @@index([collectionId])
+}
+
+// Every draw / reroll writes an immutable revision that snapshots the entry,
+// so editing or deleting the entry never rewrites history.
+model ResultRevision {
+  id             String   @id @default(cuid())
+  weeklyResultId String
+  revisionNumber Int
+  entryId        String?  // may be null if the source entry was later hard-deleted
+  source         String   @default("web") // web | whatsapp | auto
+  reason         String   @default("spin") // spin | auto | reroll
+  createdByUserId String?
+
+  // Immutable snapshot of the selected entry at selection time
+  snapTitle        String
+  snapDescription  String?
+  snapEmoji        String?
+  snapContributor  String
+  snapPosterPath   String?
+  snapBackdropPath String?
+  snapLocation     String?
+  snapImdbId       String?
+
+  // The entry that was rejected to produce THIS revision (reroll bookkeeping)
+  rejectedEntryId String?
+
+  createdAt DateTime @default(now())
+
+  weeklyResult WeeklyResult @relation(fields: [weeklyResultId], references: [id], onDelete: Cascade)
+  entry        Entry?       @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  createdBy    User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([weeklyResultId, revisionNumber])
+  @@index([weeklyResultId])
+}
+
+// ── WhatsApp ────────────────────────────────────────────────────────
+
+model WhatsAppSession {
+  id        String   @id @default(cuid())
+  coupleId  String   @unique
+  status    String   @default("disconnected") // disconnected | qr | connecting | connected
+  phone     String?
+  lastQr    String?  // last QR payload (data URL) for the settings UI
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+}
+
+model WhatsAppConfig {
+  id           String   @id @default(cuid())
+  coupleId     String   @unique
+  deliveryMode String   @default("individuals") // "group" | "individuals"
+  groupId      String?
+  recipients   String   @default("[]") // JSON array of authorized member phone numbers
+  updatedAt    DateTime @updatedAt
+
+  couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+}
+
+// Calendar: shared per-couple config for emailing .ics invites to both partners.
+model CalendarConfig {
+  id             String   @id @default(cuid())
+  coupleId       String   @unique
+  enabled        Boolean  @default(false)
+  emails         String   @default("[]") // JSON array of attendee email addresses (both partners)
+  durationMins   Int      @default(120)  // default event length
+  updatedAt      DateTime @updatedAt
+
+  couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+}
+
+// Outbox: every outbound WhatsApp message is tracked and reconciled.
+model OutboundMessage {
+  id             String    @id @default(cuid())
+  coupleId       String
+  collectionId   String?
+  weeklyResultId String?
+  revisionNumber Int?
+  kind           String    // result | reminder | reroll | test
+  status         String    @default("pending") // pending | sent | uncertain | failed
+  chatId         String?   // resolved target chat (individual or group)
+  body           String
+  waMessageId    String?   // provider message id, links reactions back to results
+  attempts       Int       @default(0)
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  couple     Couple      @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  collection Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  @@index([coupleId])
+  @@index([status])
+}
+
+// Idempotency ledger for inbound WhatsApp events (reactions & replies).
+model ProcessedInboundEvent {
+  id        String   @id @default(cuid())
+  coupleId  String
+  eventKey  String   @unique // stable hash of (messageId, action, sender, revision)
+  handledAt DateTime @default(now())
+
+  couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@index([coupleId])
+}
+
+// Worker idempotency: a job runs at most once per key even across restarts.
+model JobRun {
+  id        String   @id @default(cuid())
+  jobKey    String   @unique // e.g. "select:<periodId>" or "notify:<periodId>"
+  type      String
+  status    String   @default("done") // done | skipped
+  runAt     DateTime @default(now())
+}
