@@ -1,6 +1,7 @@
 import { beforeEach, afterAll, describe, expect, it } from "vitest";
 import { prisma } from "../src/platform/db/prisma.js";
 import * as selection from "../src/features/selection/service.js";
+import { deleteEntry } from "../src/features/entries/service.js";
 import { addEntries, makeCouple, resetDb } from "./helpers.js";
 
 beforeEach(resetDb);
@@ -106,6 +107,36 @@ describe("selection", () => {
     expect(state.completed).toBe(true);
     const completed = await prisma.entry.count({ where: { collectionId: dates.id, status: "completed" } });
     expect(completed).toBe(1);
+  });
+
+  it("removing the current pick stops it replaying as a ghost when the pool is empty", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["OnlyOne"]);
+    const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
+    expect(spun.state.hasResult).toBe(true);
+
+    // Remove the only idea (which is this week's pick). Pool is now empty.
+    await deleteEntry(couple.id, spun.state.result!.entryId!);
+
+    const state = await selection.getCurrentState(couple.id, dates.id);
+    expect(state.hasResult).toBe(false); // no ghost pick
+    expect(state.result).toBeNull();
+    expect(state.availableCount).toBe(0);
+    expect(state.action).toBe("spin");
+  });
+
+  it("spinning after the old pick was removed draws fresh from the remaining pool", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
+    const removed = spun.state.result!.title;
+    await deleteEntry(couple.id, spun.state.result!.entryId!);
+
+    // The stale result is discarded and a new winner is drawn from what's left.
+    const again = await selection.spin(couple.id, dates.id, { userId: a.id });
+    expect(again.created).toBe(true);
+    expect(again.state.result!.title).not.toBe(removed);
+    expect(await prisma.weeklyResult.count({ where: { collectionId: dates.id } })).toBe(1);
   });
 
   it("random selection is roughly uniform (equal probability)", { timeout: 60000 }, async () => {

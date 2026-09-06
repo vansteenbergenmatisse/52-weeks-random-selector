@@ -79,10 +79,10 @@ describe("movies stay unique in the pool (no duplicates)", () => {
   });
 });
 
-describe("completing a movie retires every copy of it", () => {
+describe("completing a movie retires only the picked copy", () => {
   beforeEach(resetDb);
 
-  it("marks all same-movie entries completed so none linger in the pool", async () => {
+  it("leaves other copies of the same movie in the pool for a rerun", async () => {
     const { couple, a, movies } = await makeCouple();
     // Two copies of the same movie (insert directly to simulate a pre-existing duplicate).
     await prisma.entry.create({ data: { collectionId: movies.id, contributorId: a.id, title: "Parasite", tmdbId: 496243 } });
@@ -91,10 +91,12 @@ describe("completing a movie retires every copy of it", () => {
     await selection.spin(couple.id, movies.id, { userId: a.id });
     await selection.markCompleted(couple.id, movies.id);
 
+    // Only the picked entry is completed; the other copy stays available so the
+    // movie can be picked again for a rerun.
     const available = await prisma.entry.count({ where: { collectionId: movies.id, status: "available" } });
     const completed = await prisma.entry.count({ where: { collectionId: movies.id, status: "completed" } });
-    expect(available).toBe(0);
-    expect(completed).toBe(2);
+    expect(available).toBe(1);
+    expect(completed).toBe(1);
   });
 });
 
