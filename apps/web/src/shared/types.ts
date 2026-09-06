@@ -141,5 +141,10 @@ export interface WhatsAppStatus {
   deliveryMode: "group" | "individuals";
   groupId: string | null;
   recipients: string[];
+  /** Activation breakdown — reminders are gated until `activated` is true. */
+  hasPhone: boolean;
+  linked: boolean;
+  hasEmail: boolean;
+  activated: boolean;
   note: string;
 }
