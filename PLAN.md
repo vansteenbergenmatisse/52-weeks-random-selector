@@ -16,7 +16,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: complete, running, tested.** 57 server tests pass; web build + server
+**Status: complete, running, tested.** 61 server tests pass; web build + server
 typecheck are green.
 
 ---
@@ -110,7 +110,7 @@ apps/
         whatsapp/                 # adapter / realAdapter / manager / commands (★ + 👍) / outbox / format
       platform/                   # db, config/env, logger, security/crypto, realtime/bus, ai/claude.ts (shared Claude client)
       shared/                     # time.ts (★ DST math), errors.ts
-    test/                         # selection, auth, scheduling, worker, whatsapp, emoji, calendar, places, movies
+    test/                         # selection, auth, scheduling, worker, whatsapp, emoji, calendar, places, movies, entries
   web/
     src/
       app/App.tsx                 # routes: /login, /invite/:token, /app, /app/pool; sets per-user theme
@@ -207,6 +207,12 @@ be corrected via inline live search or set to "import as text", and **nothing is
 until you click "Add N selected"** — only ticked rows import (posters + IMDb ids resolved
 in a batch). Unticked rows are skipped entirely.
 
+**Pool management** (`PoolPage` + `ProgressRow` + entries service): each partner's count shows
+how many are **currently in the pool** (available only — selected/completed/watched are excluded,
+so the number matches the visible cards). Deletion is **one-tap, no confirm**, and **either
+partner may remove any** movie/idea (e.g. "we watched it") — soft-delete backs an **Undo** toast
+(`POST /api/entries/:id/restore`). Editing stays owner-only.
+
 **Places / date discovery** (`places/osm.ts` + `PlaceFinder.tsx`): for date ideas, type
 an area ("Manhattan, New York") and pick a category (culture / food / drinks / adventure
 / outdoors / wellness). **Nominatim** geocodes the area, then **Overpass** returns named
@@ -245,7 +251,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 57 tests (needs our52_test DB, migrated)
+pnpm --filter @our52/server test          # 61 tests (needs our52_test DB, migrated)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
