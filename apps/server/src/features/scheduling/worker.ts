@@ -70,7 +70,10 @@ export async function tick(now: Date = new Date()): Promise<void> {
       const period = await selection.ensureCurrentPeriod(collection.id);
       const dueForSelection = collection.autoSelect && now.getTime() >= period.scheduledAt.getTime();
       const notifyAt = notifyInstant(collection, period);
-      const dueForNotify = collection.notifyEnabled && now.getTime() >= notifyAt.getTime();
+      // Reminders are opt-in: never fire until the couple has completed WhatsApp
+      // activation (phone + linked session + email), even if notify is toggled on.
+      const notifyDue = collection.notifyEnabled && now.getTime() >= notifyAt.getTime();
+      const dueForNotify = notifyDue && (await whatsapp.isActivated(collection.coupleId));
 
       // 1) Selection first, so a co-due notification can carry the fresh result.
       if (dueForSelection) {

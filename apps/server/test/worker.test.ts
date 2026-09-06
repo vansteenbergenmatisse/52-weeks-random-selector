@@ -6,6 +6,25 @@ import { addEntries, makeCouple, resetDb } from "./helpers.js";
 beforeEach(resetDb);
 afterAll(() => prisma.$disconnect());
 
+/** Complete WhatsApp activation: phone recipient + linked session + email. */
+async function activate(coupleId: string) {
+  await prisma.whatsAppConfig.upsert({
+    where: { coupleId },
+    update: { recipients: JSON.stringify(["15551230000"]) },
+    create: { coupleId, deliveryMode: "individuals", recipients: JSON.stringify(["15551230000"]) },
+  });
+  await prisma.whatsAppSession.upsert({
+    where: { coupleId },
+    update: { status: "connected" },
+    create: { coupleId, status: "connected" },
+  });
+  await prisma.calendarConfig.upsert({
+    where: { coupleId },
+    update: { enabled: true, emails: JSON.stringify(["teresa@x.com", "matisse@x.com"]) },
+    create: { coupleId, enabled: true, emails: JSON.stringify(["teresa@x.com", "matisse@x.com"]) },
+  });
+}
+
 describe("scheduling worker", () => {
   it("auto-selects when due, and repeated ticks (restart) never duplicate the draw", async () => {
     const { couple, a, dates } = await makeCouple();
@@ -38,9 +57,7 @@ describe("scheduling worker", () => {
   it("notification enqueues a reminder in manual mode with no result", async () => {
     const { couple, dates, a } = await makeCouple();
     await addEntries(dates.id, a.id, ["One"]);
-    await prisma.whatsAppConfig.create({
-      data: { coupleId: couple.id, deliveryMode: "individuals", recipients: JSON.stringify(["15551230000"]) },
-    });
+    await activate(couple.id);
     await prisma.collection.update({
       where: { id: dates.id },
       data: { autoSelect: false, notifyEnabled: true, cycleStartDate: new Date(Date.now() - 2 * 864e5) },
@@ -50,12 +67,26 @@ describe("scheduling worker", () => {
     expect(reminders).toBeGreaterThanOrEqual(1);
   });
 
-  it("selection persists before notification when both are due (result message, not reminder)", async () => {
+  it("does NOT notify until WhatsApp activation is complete", async () => {
     const { couple, dates, a } = await makeCouple();
-    await addEntries(dates.id, a.id, ["One", "Two"]);
+    await addEntries(dates.id, a.id, ["One"]);
+    // Phone set but session not linked and no email → not activated.
     await prisma.whatsAppConfig.create({
       data: { coupleId: couple.id, deliveryMode: "individuals", recipients: JSON.stringify(["15551230000"]) },
     });
+    await prisma.collection.update({
+      where: { id: dates.id },
+      data: { autoSelect: false, notifyEnabled: true, cycleStartDate: new Date(Date.now() - 2 * 864e5) },
+    });
+    await tick(new Date());
+    const msgs = await prisma.outboundMessage.count({ where: { coupleId: couple.id } });
+    expect(msgs).toBe(0); // reminders are gated behind activation
+  });
+
+  it("selection persists before notification when both are due (result message, not reminder)", async () => {
+    const { couple, dates, a } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    await activate(couple.id);
     await prisma.collection.update({
       where: { id: dates.id },
       data: { autoSelect: true, notifyEnabled: true, cycleStartDate: new Date(Date.now() - 2 * 864e5) },

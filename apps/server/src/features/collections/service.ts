@@ -117,6 +117,14 @@ export async function updateCollection(
   for (const key of SETTABLE) {
     if (key in patch) data[key] = patch[key];
   }
+  // Reminders are opt-in: they can only be enabled once WhatsApp activation is
+  // complete (phone linked + email). This mirrors the disabled toggle in the UI.
+  if (data.notifyEnabled === true) {
+    const { isActivated } = await import("../whatsapp/manager.js");
+    if (!(await isActivated(coupleId))) {
+      throw Errors.badRequest("Connect WhatsApp (phone, linked device, and email) before enabling reminders.");
+    }
+  }
   const updated = await prisma.collection.update({ where: { id: collectionId }, data });
   publish({ type: "collection.changed", coupleId, collectionId });
   return updated;
