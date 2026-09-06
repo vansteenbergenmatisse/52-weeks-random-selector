@@ -195,6 +195,13 @@ async function runCommand(
     });
   } else if (res.reason === "no_alternative") {
     await enqueue({ coupleId, kind: "reroll", collectionId, body: formatNoAlternative(meta) });
+  } else if (res.reason === "locked") {
+    await enqueue({
+      coupleId,
+      kind: "reroll",
+      collectionId,
+      body: `🔒 This week's ${meta.name} pick is locked in — no rerolls.`,
+    });
   }
   // "already_rerolled" => silent (a concurrent reroll already replaced it once)
 }

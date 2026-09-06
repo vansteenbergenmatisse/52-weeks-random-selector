@@ -33,7 +33,7 @@ async function seedSentResult(coupleId: string, collectionId: string) {
 }
 
 describe("whatsapp inbound commands", () => {
-  it("reaction 🔄 rerolls, and replaying the same reaction is ignored (dedup)", async () => {
+  it("reaction 🔄 does not change a locked pick, and replays are ignored (dedup)", async () => {
     const { couple, a, dates } = await makeCouple();
     await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
     await selection.spin(couple.id, dates.id, { userId: a.id });
@@ -50,13 +50,15 @@ describe("whatsapp inbound commands", () => {
     };
     await handleInbound(couple.id, evt);
     const after1 = await selection.getCurrentState(couple.id, dates.id);
-    expect(after1.revision).toBe(2);
-    expect(after1.result!.title).not.toBe(before);
+    // The week's pick is locked — 🔄 leaves it untouched.
+    expect(after1.revision).toBe(1);
+    expect(after1.result!.title).toBe(before);
 
-    // Replay same reaction → no further change.
+    // Replay same reaction → still no change.
     await handleInbound(couple.id, evt);
     const after2 = await selection.getCurrentState(couple.id, dates.id);
-    expect(after2.revision).toBe(2);
+    expect(after2.revision).toBe(1);
+    expect(after2.result!.title).toBe(before);
   });
 
   it("ignores a REMOVED reaction", async () => {
@@ -131,22 +133,29 @@ describe("whatsapp inbound commands", () => {
   it("ignores a reaction against a superseded result", async () => {
     const { couple, a, dates } = await makeCouple();
     await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
-    await selection.spin(couple.id, dates.id, { userId: a.id });
+    const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
     const { msg } = await seedSentResult(couple.id, dates.id);
-    // Reroll on the website first (revision -> 2), superseding revision 1's message.
-    await selection.reroll(couple.id, dates.id, { userId: a.id, expectedRevision: 1 });
-    const afterReroll = await selection.getCurrentState(couple.id, dates.id);
-    expect(afterReroll.revision).toBe(2);
 
-    // A stale reaction on the revision-1 message must not reroll again.
+    // Supersede the sent message's result: remove its pick from the pool, then
+    // spin again. spin() discards the stale result and creates a brand-new one
+    // (a new weeklyResultId), so the old message now points at a superseded pick.
+    await prisma.entry.update({
+      where: { id: spun.state.result!.entryId! },
+      data: { deletedAt: new Date() },
+    });
+    await selection.spin(couple.id, dates.id, { userId: a.id });
+    const current = await selection.getCurrentState(couple.id, dates.id);
+    expect(current.result!.weeklyResultId).not.toBe(msg.weeklyResultId);
+
+    // A stale ✅ DONE on the OLD message must not act on the current pick.
     await handleInbound(couple.id, {
       kind: "reaction",
       messageId: msg.waMessageId!,
-      emoji: "🔄",
+      emoji: "✅",
       senderId: `${SENDER}@c.us`,
       removed: false,
       fromMe: false,
     });
-    expect((await selection.getCurrentState(couple.id, dates.id)).revision).toBe(2);
+    expect((await selection.getCurrentState(couple.id, dates.id)).completed).toBe(false);
   });
 });

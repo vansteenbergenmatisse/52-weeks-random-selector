@@ -55,48 +55,25 @@ describe("selection", () => {
     expect(winner?.status).toBe("selected");
   });
 
-  it("reroll returns the rejected entry to the pool but excludes it from the replacement", async () => {
-    const { couple, a, dates } = await makeCouple();
-    await addEntries(dates.id, a.id, ["One", "Two"]);
+  it("reroll is disabled — the week's pick is locked once decided", async () => {
+    const { couple, a, b, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
 
     const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
-    const rejected = spun.state.result!.title;
+    const picked = spun.state.result!.title;
 
-    const rr = await selection.reroll(couple.id, dates.id, { userId: a.id, expectedRevision: 1 });
-    expect(rr.replaced).toBe(true);
-    expect(rr.state.result!.title).not.toBe(rejected); // different pick
-    expect(rr.state.revision).toBe(2);
-
-    // Rejected entry is back to available.
-    const rejectedEntry = await prisma.entry.findFirst({ where: { collectionId: dates.id, title: rejected } });
-    expect(rejectedEntry?.status).toBe("available");
-  });
-
-  it("reroll with no alternative keeps the current result", async () => {
-    const { couple, a, dates } = await makeCouple();
-    await addEntries(dates.id, a.id, ["OnlyOne"]);
-    await selection.spin(couple.id, dates.id, { userId: a.id });
-
-    const rr = await selection.reroll(couple.id, dates.id, { userId: a.id, expectedRevision: 1 });
+    // Either partner trying to reroll gets a no-op "locked" — the pick can't change.
+    const rr = await selection.reroll(couple.id, dates.id, { userId: b.id, expectedRevision: 1 });
     expect(rr.replaced).toBe(false);
-    expect(rr.reason).toBe("no_alternative");
-    expect(rr.state.result!.title).toBe("OnlyOne");
+    expect(rr.reason).toBe("locked");
+    expect(rr.state.result!.title).toBe(picked); // unchanged
     expect(rr.state.revision).toBe(1);
-  });
 
-  it("concurrent rerolls against the same revision cause ONE replacement", async () => {
-    const { couple, a, b, dates } = await makeCouple();
-    await addEntries(dates.id, a.id, ["One", "Two", "Three", "Four", "Five", "Six"]);
-    await selection.spin(couple.id, dates.id, { userId: a.id });
-
-    const [x, y] = await Promise.all([
-      selection.reroll(couple.id, dates.id, { userId: a.id, expectedRevision: 1 }),
-      selection.reroll(couple.id, dates.id, { userId: b.id, expectedRevision: 1 }),
-    ]);
-    const replacements = [x.replaced, y.replaced].filter(Boolean).length;
-    expect(replacements).toBe(1);
-    const result = await prisma.weeklyResult.findFirst({ where: { collectionId: dates.id } });
-    expect(result?.currentRevisionNumber).toBe(2); // only one bump
+    // The picked entry stays selected; nothing is returned to the pool, and only
+    // the original revision exists.
+    const pickedEntry = await prisma.entry.findFirst({ where: { collectionId: dates.id, title: picked } });
+    expect(pickedEntry?.status).toBe("selected");
+    expect(await prisma.resultRevision.count()).toBe(1);
   });
 
   it("completion marks the entry completed and keeps it excluded", async () => {

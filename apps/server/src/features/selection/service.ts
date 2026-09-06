@@ -170,89 +170,19 @@ export async function spin(
 }
 
 /**
- * Replace the current weekly result with a different entry. The rejected entry
- * returns to the pool but is excluded from THIS replacement draw. Optimistic
- * concurrency on currentRevisionNumber prevents duplicate/simultaneous rerolls.
+ * Rerolling is intentionally disabled: a week's pick is LOCKED once it's decided
+ * — by whoever spins first, or by the Sunday auto-spin. Neither partner can
+ * change it afterwards, so the choice for the week is final and identical for
+ * both. Enforced here on the server so no client (web or WhatsApp) can bypass it.
+ * Kept as a no-op (rather than deleted) so existing routes/callers stay stable.
  */
 export async function reroll(
   coupleId: string,
   collectionId: string,
-  opts: { userId?: string; source?: SelectionSource; expectedRevision?: number } = {},
+  _opts: { userId?: string; source?: SelectionSource; expectedRevision?: number } = {},
 ): Promise<{ replaced: boolean; reason?: string; state: CurrentState }> {
   await assertCollectionInCouple(collectionId, coupleId);
-  const period = await ensureCurrentPeriod(collectionId);
-
-  const result = await prisma.weeklyResult.findUnique({
-    where: { periodId: period.id },
-    include: { revisions: { orderBy: { revisionNumber: "desc" }, take: 1 } },
-  });
-  if (!result) throw Errors.conflict("There is no result to reroll yet");
-  const current = result.revisions[0]!;
-  const expected = opts.expectedRevision ?? result.currentRevisionNumber;
-  if (expected !== result.currentRevisionNumber) {
-    // Acting on a stale version — someone already rerolled.
-    return { replaced: false, reason: "already_rerolled", state: await getCurrentState(coupleId, collectionId) };
-  }
-
-  try {
-    const outcome = await prisma.$transaction(
-      async (tx) => {
-        const exclude = new Set<string>();
-        if (current.entryId) exclude.add(current.entryId);
-        const ids = await eligibleEntryIds(tx, collectionId, exclude);
-        const chosenId = pickRandom(ids);
-        if (!chosenId) return { replaced: false as const, reason: "no_alternative" };
-
-        // Optimistic lock: only proceed if the revision counter is unchanged.
-        const bumped = await tx.weeklyResult.updateMany({
-          where: { id: result.id, currentRevisionNumber: expected },
-          data: { currentRevisionNumber: expected + 1 },
-        });
-        if (bumped.count !== 1) return { replaced: false as const, reason: "already_rerolled" };
-
-        // Return the rejected entry to the pool.
-        if (current.entryId) {
-          await tx.entry.updateMany({
-            where: { id: current.entryId, status: "selected" },
-            data: { status: "available" },
-          });
-        }
-
-        const entry = await tx.entry.findUniqueOrThrow({
-          where: { id: chosenId },
-          include: { contributor: true },
-        });
-        await tx.resultRevision.create({
-          data: {
-            weeklyResultId: result.id,
-            revisionNumber: expected + 1,
-            entryId: entry.id,
-            source: opts.source ?? "web",
-            reason: "reroll",
-            createdByUserId: opts.userId ?? null,
-            rejectedEntryId: current.entryId,
-            ...snapshotData(entry),
-          },
-        });
-        await tx.entry.update({ where: { id: entry.id }, data: { status: "selected" } });
-        return { replaced: true as const };
-      },
-      // SQLite serializes writes globally, so no explicit isolation level is
-      // needed (or accepted). The optimistic lock on currentRevisionNumber above
-      // still guarantees exactly one reroll wins.
-    );
-
-    if (outcome.replaced) {
-      publish({ type: "result.changed", coupleId, collectionId });
-      publish({ type: "entries.changed", coupleId, collectionId });
-    }
-    return { ...outcome, state: await getCurrentState(coupleId, collectionId) };
-  } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && (e.code === "P2034" || e.code === "P2002")) {
-      return { replaced: false, reason: "already_rerolled", state: await getCurrentState(coupleId, collectionId) };
-    }
-    throw e;
-  }
+  return { replaced: false, reason: "locked", state: await getCurrentState(coupleId, collectionId) };
 }
 
 export async function markCompleted(coupleId: string, collectionId: string) {

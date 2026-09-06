@@ -11,22 +11,16 @@ const TILE: Record<Collection["colorKey"], string> = {
 export function ResultPanel({
   state,
   collection,
-  onReroll,
   onComplete,
   onAddToCalendar,
-  rerolling,
   addingToCalendar,
-  rerollNote,
   calendarNote,
 }: {
   state: CurrentState;
   collection: Collection;
-  onReroll: () => void;
   onComplete: () => void;
   onAddToCalendar: () => void;
-  rerolling: boolean;
   addingToCalendar: boolean;
-  rerollNote: string | null;
   calendarNote: string | null;
 }) {
   const r = state.result;
@@ -52,6 +46,7 @@ export function ResultPanel({
         <div className="flex-1 min-w-0">
           <p className="u-label">
             This week's {collection.name.toLowerCase().replace(/s$/, "")} · Week {state.weekIndex}
+            {r.reason === "auto" ? " · picked automatically" : ""}
             {state.revision > 1 ? ` · rerolled ${state.revision - 1}×` : ""}
           </p>
           <h3 className="text-xl font-bold text-ink truncate">{r.title}</h3>
@@ -78,21 +73,12 @@ export function ResultPanel({
           {state.completed ? (
             <span className="u-display text-sm text-accent bg-accent/15 rounded-md px-3 py-2">✓ Completed</span>
           ) : (
-            <>
-              <button
-                onClick={onComplete}
-                className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm text-ink hover:border-accent transition"
-              >
-                ✅ Mark done
-              </button>
-              <button
-                onClick={onReroll}
-                disabled={rerolling}
-                className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm text-ink hover:border-accent transition disabled:opacity-50"
-              >
-                🔄 {rerolling ? "…" : "Reroll"}
-              </button>
-            </>
+            <button
+              onClick={onComplete}
+              className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm text-ink hover:border-accent transition"
+            >
+              ✅ Mark done
+            </button>
           )}
           <button
             onClick={onAddToCalendar}
@@ -103,7 +89,6 @@ export function ResultPanel({
           </button>
         </div>
       </div>
-      {rerollNote && <p className="relative px-5 pb-3 -mt-1 text-xs text-accent">{rerollNote}</p>}
       {calendarNote && <p className="relative px-5 pb-3 -mt-1 text-xs text-accent">{calendarNote}</p>}
     </div>
   );

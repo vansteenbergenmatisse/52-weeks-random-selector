@@ -16,7 +16,6 @@ import {
   useCollections,
   useComplete,
   useEntries,
-  useReroll,
   useResult,
   useSpin,
 } from "./hooks";
@@ -148,7 +147,6 @@ function CollectionView({
 
   const navigate = useNavigate();
   const spin = useSpin(collection.id);
-  const reroll = useReroll(collection.id);
   const complete = useComplete(collection.id);
   const addCalendar = useAddToCalendar(collection.id);
 
@@ -156,7 +154,6 @@ function CollectionView({
   const [phase, setPhase] = useState<SpinPhase>("idle");
   const [spinToken, setSpinToken] = useState(0);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
-  const [rerollNote, setRerollNote] = useState<string | null>(null);
   const [calendarNote, setCalendarNote] = useState<string | null>(null);
 
   // Dialog state
@@ -201,6 +198,17 @@ function CollectionView({
     else if (!state?.hasResult) setPhase("idle");
   }, [state?.hasResult, alreadyRevealed]);
 
+  // A result that already exists when we arrive — the Sunday auto-spin, or the
+  // partner spun first — is shown straight away, settled. No mystery "reveal"
+  // click: you see this week's pick the moment you open the space. Only a spin
+  // you start yourself (which sets phase to "spinning" first) still animates.
+  useEffect(() => {
+    if (state?.hasResult && resultId && phase === "idle" && !alreadyRevealed) {
+      setRevealedIds((s) => new Set(s).add(resultId));
+      setPhase("settled");
+    }
+  }, [state?.hasResult, resultId, phase, alreadyRevealed]);
+
   async function onSpin() {
     if (!state) return;
     if (state.hasResult) {
@@ -220,22 +228,6 @@ function CollectionView({
   function onSettled() {
     if (resultId) setRevealedIds((s) => new Set(s).add(resultId));
     setPhase("settled");
-  }
-
-  async function onReroll() {
-    if (!state?.result) return;
-    setRerollNote(null);
-    const res = await reroll.mutateAsync(state.revision);
-    if (res.replaced) {
-      // Animate to the replacement.
-      if (res.state.result) setRevealedIds((s) => new Set(s)); // keep revealed
-      setPhase("spinning");
-      setSpinToken((t) => t + 1);
-    } else if (res.reason === "no_alternative") {
-      setRerollNote("No other idea available — add more to reroll. Kept this week's pick.");
-    } else if (res.reason === "already_rerolled") {
-      setRerollNote("Your partner just rerolled — showing the latest pick.");
-    }
   }
 
   async function onAddToCalendar() {
@@ -328,12 +320,9 @@ function CollectionView({
             <ResultPanel
               state={state}
               collection={collection}
-              onReroll={onReroll}
               onComplete={() => complete.mutate()}
               onAddToCalendar={onAddToCalendar}
-              rerolling={reroll.isPending}
               addingToCalendar={addCalendar.isPending}
-              rerollNote={rerollNote}
               calendarNote={calendarNote}
             />
           </div>
