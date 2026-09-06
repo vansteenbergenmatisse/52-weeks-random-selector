@@ -19,6 +19,16 @@ theme (sunset/berry tones, no blue) with a per-person accent colour.
 **Status: complete, running, tested.** 67 server tests pass; web build + server
 typecheck are green.
 
+**Latest session (2026-09-06, merged to `main` via PR #1):**
+- **Storage → SQLite** (single file, no DB service); worker runs **inline in the API**
+  (`RUN_WORKER`, default true). Deploy is now 2 services + a Volume at `/data`, no Postgres.
+- **WhatsApp → Baileys** (no Chromium) and reminders are **opt-in behind activation**
+  (phone + linked session + email), enforced in the worker, API, and a gated Settings toggle.
+- **Pool fixes:** an emptied pool no longer replays a "ghost" pick; watched movies are
+  removable; completing a movie retires only the picked copy.
+- **Railway:** api config renamed to `railway.json` (auto-detected); first deploy built +
+  started, pending env/Volume config (see §9).
+
 ---
 
 ## 2. How to run / where to test
@@ -182,12 +192,14 @@ Invariants & notable fields:
 ## 6. Core behaviours (the subtle parts)
 
 **Selection** (`features/selection/service.ts`): server picks + persists the winner
-**before** the client animates; uniform `crypto.randomInt`; `spin` fast-paths to a
-reveal and converges on the same result under a `unique(periodId)` conflict; `reroll`
-uses optimistic concurrency on `currentRevisionNumber`; `markCompleted` sets
-`completedAt` **and** flips the entry to `completed` — and for movies **retires every
-copy of that film** (same `tmdbId`), so a watched movie can't linger or be re-picked.
-Selected/completed entries are excluded from draws.
+**before** the client animates; uniform `crypto.randomInt`; `reroll` uses optimistic
+concurrency on `currentRevisionNumber`; `markCompleted` sets `completedAt` **and**
+flips the picked entry to `completed` (**only that copy** — other copies of the same
+movie stay for a re-watch). Selected/completed entries are excluded from draws.
+**Pool is the source of truth:** a weekly result only shows if its pick is still a
+live pool entry — if the pick was removed, `getCurrentState`/`spin` treat the week as
+re-spinnable (spin discards the stale result and draws fresh), so an emptied pool never
+replays a "ghost" pick. History reads immutable snapshots, so it's untouched.
 
 **Carousel** (`Carousel.tsx`): launches at full speed (long fixed runway) and eases
 out smoothly into the winner (`easeOutQuint`, ~7s). Winner is server-decided; odds
@@ -215,11 +227,15 @@ be corrected via inline live search or set to "import as text", and **nothing is
 until you click "Add N selected"** — only ticked rows import (posters + IMDb ids resolved
 in a batch). Unticked rows are skipped entirely.
 
-**Pool management** (`PoolPage` + `ProgressRow` + entries service): each partner's count shows
-how many are **currently in the pool** (available only — selected/completed/watched are excluded,
+**Pool management** (`PoolPage` + `IdeaGrid` + `ProgressRow` + entries service): each partner's
+count shows how many are **currently in the pool** (available only — selected/completed excluded,
 so the number matches the visible cards). Deletion is **one-tap, no confirm**, and **either
 partner may remove any** movie/idea (e.g. "we watched it") — soft-delete backs an **Undo** toast
-(`POST /api/entries/:id/restore`). Editing stays owner-only. Each **movie is unique** in a collection (dedup by `tmdbId` on add + bulk import; adding a dupe returns the existing entry). Marking a movie **completed retires every copy** of it (same `tmdbId`) from the pool, so a watched movie can't linger or be picked again.
+(`POST /api/entries/:id/restore`). Editing stays owner-only. The grid also shows a **"✓ Watched"
+section** for completed movies so either partner can still delete them (otherwise a completed pick
+lingers invisibly and could resurface as a ghost). Each **movie is unique** in a collection (dedup
+by `tmdbId` on add + bulk import; adding a dupe returns the existing entry). Marking a movie
+**completed retires only that picked copy** — duplicates stay in the pool for a re-watch.
 
 **Places / date discovery** (`places/osm.ts` + `PlaceFinder.tsx`): for date ideas, type
 an area ("Manhattan, New York") and pick a category (culture / food / drinks / adventure
@@ -309,11 +325,18 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
-- **Docker images not built** this session (no Docker available) — the Railway nginx
-  `$PORT` templating + entrypoint were validated by rendering, not a full image build;
-  confirm on the first Railway deploy.
-- **Railway deploy configured but not run** — `railway.*.json` + `docs/DEPLOY-RAILWAY.md`
-  are in the repo, but the services still need creating in the Railway dashboard.
+- **Docker images not built** this session (no Docker available) — the Dockerfile steps
+  were validated indirectly (frozen-lockfile install, `prisma generate`, tsc, web build,
+  and a live `tsx` boot on SQLite); confirm the actual image build on the first deploy.
+- **Railway deploy in progress** — the first deploy **built and started** (Baileys +
+  lockfile + Dockerfile all fine); it then failed only on a missing runtime env var
+  (`DATABASE_URL`). With SQLite the fix is: one **app** service with a **Volume at `/data`**
+  and `DATABASE_URL=file:/data/our52.db` (+ `SESSION_SECRET`, `APP_BASE_URL`, `CORS_ORIGINS`,
+  keys) plus the **web** service (Config Path `railway.web.json`, Generate Domain). No
+  Postgres/worker service. See `docs/DEPLOY-RAILWAY.md`.
+- **Verified locally on SQLite** ✅ — full app runs (`pnpm dev`): login, collections,
+  spin/reroll/complete, inline worker, and the WhatsApp activation gating all work against
+  the SQLite file. Only live WhatsApp pairing + the hosted Railway image remain to confirm.
 - **Anthropic live** ✅ — `ANTHROPIC_API_KEY` is set; smart Excel movie matching, column
   detection, and auto-emoji are active and verified.
 
