@@ -3,15 +3,25 @@ import { hashPassword } from "../src/platform/security/crypto.js";
 import { createDefaultCollections } from "../src/features/collections/service.js";
 import { firstScheduledInstant } from "../src/shared/time.js";
 
-/** Wipe all tables between tests (order respects FKs via cascade). */
+/** Wipe all tables between tests. Deletes children before parents so foreign
+ *  keys are satisfied (SQLite has no TRUNCATE ... CASCADE). DB-agnostic. */
 export async function resetDb() {
-  await prisma.$executeRawUnsafe(`
-    TRUNCATE TABLE
-      "ProcessedInboundEvent","OutboundMessage","ResultRevision","WeeklyResult","WeeklyPeriod",
-      "Entry","Collection","WhatsAppConfig","WhatsAppSession","Invitation","Membership",
-      "Session","JobRun","Couple","User"
-    RESTART IDENTITY CASCADE;
-  `);
+  await prisma.resultRevision.deleteMany();
+  await prisma.weeklyResult.deleteMany();
+  await prisma.weeklyPeriod.deleteMany();
+  await prisma.entry.deleteMany();
+  await prisma.outboundMessage.deleteMany();
+  await prisma.processedInboundEvent.deleteMany();
+  await prisma.jobRun.deleteMany();
+  await prisma.collection.deleteMany();
+  await prisma.whatsAppConfig.deleteMany();
+  await prisma.whatsAppSession.deleteMany();
+  await prisma.calendarConfig.deleteMany();
+  await prisma.invitation.deleteMany();
+  await prisma.membership.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.couple.deleteMany();
+  await prisma.user.deleteMany();
 }
 
 export async function makeUser(username: string, displayName = username) {

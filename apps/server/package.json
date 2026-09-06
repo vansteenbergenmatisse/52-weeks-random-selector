@@ -10,6 +10,7 @@
     "build": "prisma generate && tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "tsx src/app/index.ts",
+    "start:prod": "prisma migrate deploy && tsx prisma/seed.ts && tsx src/app/index.ts",
     "start:worker": "tsx src/app/worker.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",

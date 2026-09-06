@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile.server"
   },
   "deploy": {
-    "startCommand": "pnpm db:migrate && pnpm start",
+    "startCommand": "pnpm start:prod",
     "restartPolicyType": "ON_FAILURE",
     "healthcheckPath": "/api/health"
   }

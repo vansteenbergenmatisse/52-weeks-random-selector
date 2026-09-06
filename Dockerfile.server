@@ -1,4 +1,4 @@
-# Our 52 — API + worker image (shared). Runs via tsx.
+# Our 52 — single app image (API + inline scheduling worker). Runs via tsx.
 FROM node:22-bookworm-slim
 
 ENV PNPM_HOME=/pnpm
@@ -20,5 +20,7 @@ RUN pnpm --filter @our52/server exec prisma generate
 WORKDIR /app/apps/server
 EXPOSE 4000
 
-# Default command runs the API; the worker service overrides it in compose.
-CMD ["pnpm", "start"]
+# Applies migrations, seeds the couple (idempotent), then starts the API with the
+# scheduling worker inline (RUN_WORKER defaults true). Baked into the image so it
+# runs even if the platform doesn't apply railway.json's startCommand.
+CMD ["pnpm", "start:prod"]

@@ -6,9 +6,12 @@ build/
 *.log
 .DS_Store
 .pnpm-store/
-apps/server/.wwebjs_auth/
-apps/server/.wwebjs_cache/
 apps/server/data/whatsapp/
+# SQLite database files (local dev/test + prod volume) — never commit data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 apps/web/test-results/
 apps/web/playwright-report/
 docs/visual-qa/screenshots/*.tmp.png

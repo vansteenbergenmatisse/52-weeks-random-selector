@@ -237,7 +237,9 @@ export async function reroll(
         await tx.entry.update({ where: { id: entry.id }, data: { status: "selected" } });
         return { replaced: true as const };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      // SQLite serializes writes globally, so no explicit isolation level is
+      // needed (or accepted). The optimistic lock on currentRevisionNumber above
+      // still guarantees exactly one reroll wins.
     );
 
     if (outcome.replaced) {

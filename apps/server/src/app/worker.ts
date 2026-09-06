@@ -1,23 +1,11 @@
-import { env } from "../platform/config/env.js";
 import { logger } from "../platform/logger/logger.js";
 import { prisma } from "../platform/db/prisma.js";
-import { startWorkerLoop, stopWorkerLoop } from "../features/scheduling/worker.js";
-import * as whatsapp from "../features/whatsapp/manager.js";
+import { startScheduling, stopWorkerLoop } from "../features/scheduling/worker.js";
 
 async function main() {
   logger.info("Our 52 worker starting");
 
-  // Reconnect any previously-paired WhatsApp sessions (best effort).
-  if (env.WHATSAPP_ENABLED) {
-    const sessions = await prisma.whatsAppSession.findMany({ where: { status: "connected" } });
-    for (const s of sessions) {
-      whatsapp.connect(s.coupleId).catch((err) =>
-        logger.warn({ err: String(err), coupleId: s.coupleId }, "WhatsApp reconnect failed"),
-      );
-    }
-  }
-
-  startWorkerLoop(env.WORKER_TICK_SECONDS);
+  await startScheduling();
 
   const shutdown = async (sig: string) => {
     logger.info({ sig }, "Shutting down worker");
