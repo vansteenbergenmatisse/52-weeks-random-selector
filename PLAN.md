@@ -370,11 +370,13 @@ yet" banner. To make it real:
    (exponential backoff, session re-use) so the link stays up on an always-on host.
 3. **Reconnect prompt/pop-up** — when WhatsApp is disconnected, surface a pop-up to reconnect
    (scan QR). If it disconnects again, prompt to re-link; a message can only be sent once
-   connected. **Requirement: WhatsApp must be connected to use it** (SCOPE TO CONFIRM: whole
-   app vs. just weekly reminders — currently the app degrades gracefully without WhatsApp).
+   connected. **Scope (confirmed): connection is required only for the weekly WhatsApp
+   reminders**, NOT the whole app — spinning, the pool, and calendar keep working without it
+   (graceful degradation stays). The reminder toggle stays gated behind an active connection.
 4. **Activation form** — user enters their **name + phone + email**, and can **pre-fill the
-   partner's email and phone** for them. (TODO: confirm what happens once it's filled in —
-   e.g. notify/invite the partner, or just save + attempt connect.)
+   partner's email and phone** for them. **Once filled in (confirmed): save the details, then
+   immediately start the WhatsApp connection and show the QR to scan**; reminders unlock once
+   linked.
 
 ### ✅ MANDATORY before launch/use — full system bug review
 Run a **10-agent system-wide bug hunt** (deploy 10 area-focused agents to find issues/bugs
