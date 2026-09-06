@@ -1,7 +1,11 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
+import fastifyStatic from "@fastify/static";
 import { corsOrigins, env } from "../platform/config/env.js";
 import { logger } from "../platform/logger/logger.js";
 import { handleError } from "./http.js";
@@ -35,6 +39,25 @@ export async function buildServer() {
   await app.register(whatsappRoutes);
   await app.register(calendarRoutes);
   await app.register(eventRoutes);
+
+  // Single-service deploy: also serve the built web app from this process, so
+  // one Railway service (and one origin) hosts both API and frontend. The
+  // client uses relative /api paths, so same-origin needs no CORS or proxy.
+  // Only activates when a build exists — dev (Vite on :5173) is untouched.
+  const webDir =
+    env.WEB_DIST_DIR ||
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../web/dist");
+  if (existsSync(webDir)) {
+    await app.register(fastifyStatic, { root: webDir, wildcard: false });
+    // SPA fallback: any non-API GET that didn't match a file returns index.html.
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method === "GET" && !req.url.startsWith("/api")) {
+        return reply.sendFile("index.html");
+      }
+      return reply.code(404).send({ error: "not_found", message: "Not found" });
+    });
+    logger.info(`Serving web app from ${webDir}`);
+  }
 
   return app;
 }

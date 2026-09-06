@@ -39,6 +39,9 @@ const schema = z.object({
   // Run the scheduling worker inline in the API process (single-service SQLite
   // deploy). Set false to run a dedicated worker process instead.
   RUN_WORKER: bool(true),
+  // Absolute path to the built web app to serve from the API (single-service
+  // deploy). Empty = auto-resolve ../../../web/dist, else skip static serving.
+  WEB_DIST_DIR: z.string().optional().default(""),
   TMDB_API_KEY: z.string().optional().default(""),
   TMDB_IMAGE_BASE: z.string().default("https://image.tmdb.org/t/p"),
   WHATSAPP_ENABLED: bool(false),
