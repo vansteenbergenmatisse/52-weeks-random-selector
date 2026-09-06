@@ -21,7 +21,7 @@ button.
 |-----------|--------|
 | Frontend  | React 18 + TypeScript + Vite + Tailwind, React Query, React Router |
 | Backend   | Node + TypeScript (run via `tsx`), Fastify, Zod |
-| Database  | PostgreSQL + Prisma (migrations + type-safe client) |
+| Database  | SQLite (single file) + Prisma (migrations + type-safe client) |
 | Worker    | Persistent Node process (DB-backed scheduling + WhatsApp) |
 | Realtime  | Server-Sent Events (couple-scoped) for live two-device sync |
 | WhatsApp  | `whatsapp-web.js` (unofficial, free, self-hosted) — optional |
@@ -48,22 +48,19 @@ docker compose up --build
 
 ## Quick start (local, no Docker)
 
-Requires Node ≥ 20, pnpm, and a local PostgreSQL.
+Requires Node ≥ 20 and pnpm. Storage is **SQLite** — no database server to run.
 
 ```bash
 pnpm install
-createdb our52_dev
 
-# apps/server/.env — point DATABASE_URL at your Postgres, e.g.:
-#   DATABASE_URL=postgresql://<you>@localhost:5432/our52_dev
+# apps/server/.env — SQLite file (default), e.g. DATABASE_URL=file:./dev.db
 cp .env.example apps/server/.env    # then edit
 
-pnpm --filter @our52/server db:migrate:dev   # create schema
+pnpm --filter @our52/server db:migrate:dev   # create schema (creates prisma/dev.db)
 pnpm --filter @our52/server db:seed          # demo couple + example ideas
 
-# In two terminals (or use `pnpm dev` at the root to run all in parallel):
-pnpm --filter @our52/server dev              # API on :4000
-pnpm --filter @our52/server dev:worker       # scheduling + WhatsApp worker
+# The API runs the scheduling worker inline (RUN_WORKER defaults true):
+pnpm --filter @our52/server dev              # API on :4000 (+ inline worker)
 pnpm --filter @our52/web dev                 # web on :5173
 ```
 
@@ -188,7 +185,7 @@ Settings.
 ## Testing
 
 ```bash
-pnpm --filter @our52/server test     # 32 unit/integration tests (needs our52_test DB)
+pnpm --filter @our52/server test     # 67 unit/integration tests (SQLite; no setup)
 pnpm --filter @our52/web test:e2e    # Playwright browser flows
 ```
 
@@ -198,12 +195,11 @@ invitation two-person limit incl. simultaneous accepts, DST-aware scheduling,
 worker restart idempotency, and WhatsApp event deduplication (removed/stale/
 unauthorized/replayed). See `apps/server/test/`.
 
-Create the test DB once:
+No setup needed — the test suite creates a throwaway SQLite DB
+(`apps/server/prisma/test.db`) automatically via `test/globalSetup.ts`:
 
 ```bash
-createdb our52_test
-DATABASE_URL=postgresql://<you>@localhost:5432/our52_test \
-  pnpm --filter @our52/server exec prisma migrate deploy
+pnpm --filter @our52/server test
 ```
 
 Visual QA (screenshots at 800×600, 1440×900, 390×844 across initial/spinning/
@@ -214,14 +210,12 @@ settled states) and the reference-comparison notes live in
 
 ## Persistence & backup
 
-- All durable state is in PostgreSQL. In Docker it lives in the `our52_db`
-  volume. Back it up with `pg_dump`:
-  ```bash
-  docker compose exec db pg_dump -U our52 our52 > backup.sql
-  ```
-- WhatsApp session credentials persist in the `our52_wa` volume
-  (`WHATSAPP_SESSION_DIR`). Protect this volume — it grants WhatsApp access. QR
-  payloads and secrets are never logged.
+- All durable state is a **single SQLite file** (`DATABASE_URL`, e.g.
+  `/data/our52.db`). In Docker/Railway it lives on the `our52_data` volume.
+  Back it up by copying the file off the volume; restore by dropping it back.
+- WhatsApp session credentials persist under `WHATSAPP_SESSION_DIR` (also on the
+  volume). Protect the volume — it grants WhatsApp access. QR payloads and
+  secrets are never logged.
 
 ## Self-hosting
 

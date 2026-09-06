@@ -16,7 +16,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: complete, running, tested.** 64 server tests pass; web build + server
+**Status: complete, running, tested.** 67 server tests pass; web build + server
 typecheck are green.
 
 ---
@@ -33,13 +33,14 @@ typecheck are green.
 **🎨 Matisse** on the login screen (both password `12345`, same couple). Open two
 windows/incognito to see live sync.
 
-Restart the dev stack — note the **worker is a separate process** (root `pnpm dev`
-starts API + web only):
+Restart the dev stack — the **scheduling worker now runs inline** in the API
+(`RUN_WORKER` defaults true), so the API process does both:
 ```bash
-pnpm --filter @our52/server dev        # API :4000  (tsx watch)
-pnpm --filter @our52/server dev:worker # scheduling + WhatsApp worker
+pnpm --filter @our52/server dev        # API :4000 + inline worker (tsx watch)
 pnpm --filter @our52/web dev           # web :5173
 ```
+(A standalone worker still exists — `pnpm --filter @our52/server dev:worker` — but
+isn't needed; set `RUN_WORKER=false` on the API if you run it separately.)
 
 Full reproducible stack (fresh DB, migrations + seed run automatically):
 ```bash
@@ -48,10 +49,12 @@ docker compose up --build  # app → http://localhost:8080
 ```
 
 **Local dev prerequisites (already set up):**
-- Local PostgreSQL running; databases `our52_dev` (app) and `our52_test` (tests).
+- **SQLite — no database server.** `DATABASE_URL=file:./dev.db` → `apps/server/prisma/dev.db`
+  (created by `pnpm --filter @our52/server db:migrate:dev`). Tests use their own
+  `prisma/test.db`, recreated each run by `test/globalSetup.ts`.
 - `apps/server/.env` exists with `DATABASE_URL` and `TMDB_API_KEY` set (see §8).
-- Docker compose files are written and builds pass, but compose was not executed
-  this session (validated against local Postgres).
+- Docker compose (SQLite single-app + web) is written and builds pass; compose was
+  not executed this session (validated by running the app directly on SQLite).
 
 ---
 
@@ -61,13 +64,13 @@ docker compose up --build  # app → http://localhost:8080
 |-----------|--------|
 | Frontend  | React 18 + TS + Vite + Tailwind v3, React Query, React Router |
 | Backend   | Node + TS via **tsx** (no compile step), Fastify, Zod |
-| DB        | PostgreSQL + **Prisma** (migrations + typed client) |
-| Worker    | Persistent Node process (DB-backed scheduling + WhatsApp) |
+| DB        | **SQLite** (single file) + **Prisma** (migrations + typed client) |
+| Worker    | Scheduling + WhatsApp — runs **inline in the API** (`RUN_WORKER`, default true) |
 | Realtime  | Server-Sent Events (`/api/events`), couple-scoped |
 | Movies    | **TMDB API** — instant (typeahead) search, browse/discover, posters, ratings, IMDb ids (**key set**) |
 | Places    | **OpenStreetMap** — Nominatim geocode + Overpass POI search for date discovery (**free, keyless**) |
 | Emoji     | Auto-pick for date ideas via Claude (optional key; keyword fallback) |
-| WhatsApp  | `whatsapp-web.js` (unofficial, free) — **optional**, currently fixture |
+| WhatsApp  | **Baileys** (unofficial, free, no browser) — **optional**, currently fixture; **opt-in**, gated behind activation |
 | Calendar  | `.ics` invites emailed via **Resend** — **optional**, dormant until keyed |
 | Tests     | Vitest (unit/integration, real DB) |
 | Delivery  | Docker Compose (local); **Railway** via `railway.*.json` + Dockerfiles (see `docs/DEPLOY-RAILWAY.md`) |
@@ -110,7 +113,7 @@ apps/
         calendar/
           ics.ts                  # ★ dependency-free .ics builder
           service.ts              # ★ config, Resend send, 👍 booking, prompt enqueue
-        whatsapp/                 # adapter / realAdapter / manager / commands (★ + 👍) / outbox / format
+        whatsapp/                 # adapter / baileysAdapter / manager (★ activation gate) / commands (★ + 👍) / outbox / format
       platform/                   # db, config/env, logger, security/crypto, realtime/bus, ai/claude.ts (shared Claude client)
       shared/                     # time.ts (★ DST math), errors.ts
     test/                         # selection, auth, scheduling, worker, whatsapp, emoji, calendar, places, movies, entries
@@ -144,7 +147,7 @@ apps/
     tailwind.config.js            # ★ warm palette (no blue), accent via CSS var
     e2e/main-flow.spec.ts (teresa/matisse) · nginx.conf
 docs/visual-qa/ · docs/DEPLOY-RAILWAY.md · Dockerfile.* · apps/web/nginx.conf.template + docker-entrypoint.sh
-railway.server/web/worker.json (Railway Dockerfile builds) · docker-compose.yml · .env.example · README.md · PLAN.md
+railway.json (api, auto-detected) + railway.web/worker.json (set Config Path) · docker-compose.yml · .env.example · README.md · PLAN.md
 ```
 
 `★` = files carrying the important/subtle logic.
@@ -232,11 +235,16 @@ time, DST-aware via Luxon; `tick()` auto-selects (if due) and notifies (saved re
 or a reminder), both `JobRun`-guarded; only the CURRENT period is processed.
 
 **WhatsApp** (`features/whatsapp/*`): the **paired phone is the sender** (a
-"userbot" via whatsapp-web.js). Shared selection logic drives web + WhatsApp. Inbound
+"userbot" via **Baileys** — pure WebSocket, no Chromium; `baileysAdapter.ts` implements the
+library-agnostic `WhatsAppAdapter`). Shared selection logic drives web + WhatsApp. Inbound
 🔄/✅ reactions and REROLL/DONE replies are deduped, authorised, and guarded against
 superseded results. Outbox reconciles uncertain sends. **Currently the fixture
 adapter is active** (`WHATSAPP_ENABLED=false`) — messages are recorded, not delivered.
 Recipient numbers require a country code (E.164); Settings has a country-prefix picker.
+**Reminders are opt-in**: they never fire until the couple completes a one-time **activation**
+(phone recipient + linked WhatsApp session + calendar email). The reminder toggle is disabled
+until then (Settings shows a 3-step checklist); the worker + `updateCollection` both enforce
+the gate (`whatsapp.isActivated`), so nothing sends before setup is complete.
 
 **Calendar** (`features/calendar/*`): after a weekly pick, a second "📅 add to
 calendar?" WhatsApp message is enqueued (when configured); a **👍** on it — or the
@@ -256,7 +264,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 64 tests (needs our52_test DB, migrated)
+pnpm --filter @our52/server test          # 67 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
@@ -267,23 +275,25 @@ WhatsApp event dedup, **auto-emoji fallback**, **calendar .ics build + prompt en
 **OSM place search** (query builder + response mapper), **movie import** (best-match +
 AI-verdict reconcile + column-detection sanitizer + bulk poster/IMDb persistence),
 **entries** (either-partner delete + restore + couple isolation, available-only progress
-count, movie dedup on add/import, completion retiring every copy of a movie).
+count, movie dedup on add/import, completion retiring only the picked copy), empty-pool/removed-pick ghost guard, and WhatsApp reminder activation gating.
 
-If tests fail on missing columns, migrate the test DB:
-`cd apps/server && DATABASE_URL=postgresql://<you>@localhost:5432/our52_test pnpm exec prisma migrate deploy`
+The test DB (`apps/server/prisma/test.db`) is created fresh each run by
+`test/globalSetup.ts` (`prisma db push`), so there's no manual migrate step.
 
 ---
 
 ## 8. Environment variables (see `.env.example`)
 
-Core: `DATABASE_URL, PORT, APP_BASE_URL, SESSION_SECRET, CORS_ORIGINS, DEMO_MODE,
-NODE_ENV, DEFAULT_TIMEZONE/WEEKDAY/TIME, WORKER_TICK_SECONDS, VITE_API_BASE`.
+Core: `DATABASE_URL` (SQLite `file:` URL — `file:./dev.db` locally, `file:/data/our52.db`
+on a Railway Volume), `PORT, APP_BASE_URL, SESSION_SECRET, CORS_ORIGINS, DEMO_MODE,
+NODE_ENV, DEFAULT_TIMEZONE/WEEKDAY/TIME, WORKER_TICK_SECONDS, RUN_WORKER` (default true —
+inline worker), `VITE_API_BASE`.
 
 Integrations (all optional; features degrade gracefully):
 - `TMDB_API_KEY` — **SET** (v4 read-access token). Movie search/discover/posters/IMDb live.
 - `ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`, default Haiku 4.5) — **SET** → smart Excel movie matching + nicer auto-emojis. Unset → keyword-emoji + string-match fallback.
 - `RESEND_API_KEY` + `CALENDAR_FROM_EMAIL` — *not set* → calendar invites dormant.
-- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR`, `WHATSAPP_CHROME_PATH`.
+- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR` (Baileys multi-file auth). *(No Chrome path any more — Baileys needs no browser.)*
 
 In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 
@@ -292,8 +302,10 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 ## 9. Known gaps / what's NOT verified
 
 - **WhatsApp live delivery & reactions are UNVERIFIED** — no phone paired; the adapter
-  is fixture. To go live: `WHATSAPP_ENABLED=true`, restart, Settings → Connect → scan QR,
-  then Send test. It's an unofficial client (can disconnect; needs an always-on host).
+  is fixture. The **Baileys** adapter is coded + module-shape smoke-tested, but real
+  QR pairing/send needs a phone. To go live: `WHATSAPP_ENABLED=true`, restart, complete
+  activation in Settings (phone + Connect → scan QR + email), then Send test. Unofficial
+  client (can disconnect; needs an always-on host).
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
@@ -309,9 +321,11 @@ In production set `DEMO_MODE=false` and a real `SESSION_SECRET`.
 
 ## 10. Suggested next steps
 
-1. **Finish the Railway deploy** — follow `docs/DEPLOY-RAILWAY.md`: add Postgres, create
-   the **api** (config `railway.server.json`) and **web** (config `railway.web.json`)
-   services, **Generate Domain** on web, wire `API_UPSTREAM` + `CORS_ORIGINS`.
+1. **Finish the Railway deploy** — follow `docs/DEPLOY-RAILWAY.md`: two services, no
+   database. Create the **app** (auto-detects root `railway.json`; add a **Volume** at
+   `/data` and set `DATABASE_URL=file:/data/our52.db`) and **web** (set Config Path to
+   `railway.web.json`), **Generate Domain** on web, wire `API_UPSTREAM` + `CORS_ORIGINS`.
+   Keep the app at **one replica** (SQLite + in-process live-sync).
 2. Pair a real WhatsApp phone and verify live send + 🔄/✅/👍 round-trip (incl. calendar).
 3. Add `RESEND_API_KEY` + both email addresses → verify a real calendar invite lands.
 4. `docker compose up --build` smoke test end-to-end (validates the new web entrypoint).

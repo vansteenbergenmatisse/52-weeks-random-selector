@@ -20,12 +20,12 @@ async function syncStatus(coupleId: string, status: WAStatus, phone?: string, qr
 async function build(coupleId: string): Promise<WhatsAppAdapter> {
   if (env.WHATSAPP_ENABLED) {
     try {
-      const { RealWhatsAppAdapter } = await import("./realAdapter.js");
-      const a = new RealWhatsAppAdapter(coupleId);
+      const { BaileysWhatsAppAdapter } = await import("./baileysAdapter.js");
+      const a = new BaileysWhatsAppAdapter(coupleId);
       wire(a);
       return a;
     } catch (err) {
-      logger.error({ err: String(err) }, "Failed to load real WhatsApp adapter; using fixture");
+      logger.error({ err: String(err) }, "Failed to load Baileys WhatsApp adapter; using fixture");
     }
   }
   const fixture = new FixtureAdapter(coupleId);
@@ -70,9 +70,39 @@ export async function disconnect(coupleId: string): Promise<void> {
   await syncStatus(coupleId, "disconnected");
 }
 
+/**
+ * Activation gate for WhatsApp reminders. Reminders are opt-in and must not
+ * fire until the couple has completed the one-time setup: a phone recipient,
+ * a linked (connected) WhatsApp session, and an email for calendar invites.
+ */
+export interface Activation {
+  hasPhone: boolean;
+  linked: boolean;
+  hasEmail: boolean;
+  activated: boolean;
+}
+
+export async function getActivation(coupleId: string): Promise<Activation> {
+  const [config, session, calendar] = await Promise.all([
+    prisma.whatsAppConfig.findUnique({ where: { coupleId } }),
+    prisma.whatsAppSession.findUnique({ where: { coupleId } }),
+    prisma.calendarConfig.findUnique({ where: { coupleId } }),
+  ]);
+  const hasPhone = !!config && safeArr(config.recipients).length > 0;
+  const linked = session?.status === "connected";
+  const hasEmail = !!calendar && safeArr(calendar.emails).length > 0;
+  return { hasPhone, linked, hasEmail, activated: hasPhone && linked && hasEmail };
+}
+
+/** True only when reminders are allowed to send for this couple. */
+export async function isActivated(coupleId: string): Promise<boolean> {
+  return (await getActivation(coupleId)).activated;
+}
+
 export async function getStatus(coupleId: string) {
   const session = await prisma.whatsAppSession.findUnique({ where: { coupleId } });
   const config = await prisma.whatsAppConfig.findUnique({ where: { coupleId } });
+  const activation = await getActivation(coupleId);
   return {
     enabled: env.WHATSAPP_ENABLED,
     status: session?.status ?? "disconnected",
@@ -81,8 +111,9 @@ export async function getStatus(coupleId: string) {
     deliveryMode: config?.deliveryMode ?? "individuals",
     groupId: config?.groupId ?? null,
     recipients: config ? safeArr(config.recipients) : [],
+    ...activation,
     note: env.WHATSAPP_ENABLED
-      ? "whatsapp-web.js is an unofficial client. It can disconnect or be blocked, and requires an always-on host. No paid subscription is needed."
+      ? "Baileys is an unofficial WhatsApp client (no browser needed). It can disconnect or be blocked, and requires an always-on host. No paid subscription is needed."
       : "WhatsApp is disabled (WHATSAPP_ENABLED=false). A fixture adapter is active; enable it and pair a phone in production.",
   };
 }

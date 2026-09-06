@@ -1,87 +1,34 @@
-# Our 52 — reproducible local / self-hosted stack.
+# Our 52 — reproducible local / self-hosted stack (SQLite, single app service).
 # Usage: cp .env.example .env  (adjust secrets)  then  docker compose up --build
 # App:   http://localhost:8080   ·   API: http://localhost:4000
+#
+# Storage is a single SQLite file on the `our52_data` volume — no database
+# service to run. The app service applies migrations, seeds the couple, serves
+# the API, and runs the scheduling worker inline (RUN_WORKER defaults true).
 
 services:
-  db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: our52
-      POSTGRES_PASSWORD: our52
-      POSTGRES_DB: our52
-    volumes:
-      - our52_db:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U our52 -d our52"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  # Runs migrations (and demo seed when DEMO_MODE=true) once, then exits.
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://our52:our52@db:5432/our52
-      DEMO_MODE: ${DEMO_MODE:-true}
-      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/New_York}
-    command: >
-      sh -c "pnpm exec prisma migrate deploy &&
-             if [ \"$${DEMO_MODE}\" = \"true\" ]; then pnpm db:seed; fi"
-
-  server:
+  app:
     build:
       context: .
       dockerfile: Dockerfile.server
     restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://our52:our52@db:5432/our52
+      DATABASE_URL: file:/data/our52.db
       PORT: 4000
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
       SESSION_SECRET: ${SESSION_SECRET:-please-change-this-in-production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       DEMO_MODE: ${DEMO_MODE:-true}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
       WHATSAPP_SESSION_DIR: /data/whatsapp
     volumes:
-      - our52_wa:/data/whatsapp
+      - our52_data:/data
     ports:
       - "4000:4000"
-    command: ["pnpm", "start"]
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://our52:our52@db:5432/our52
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
-      SESSION_SECRET: ${SESSION_SECRET:-please-change-this-in-production}
-      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/New_York}
-      TMDB_API_KEY: ${TMDB_API_KEY:-}
-      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
-      WHATSAPP_SESSION_DIR: /data/whatsapp
-      WORKER_TICK_SECONDS: ${WORKER_TICK_SECONDS:-30}
-    volumes:
-      - our52_wa:/data/whatsapp
-    command: ["pnpm", "start:worker"]
+    # start:prod = migrate deploy + seed (idempotent) + API with inline worker.
 
   web:
     build:
@@ -89,10 +36,11 @@ services:
       dockerfile: Dockerfile.web
     restart: unless-stopped
     depends_on:
-      - server
+      - app
+    environment:
+      API_UPSTREAM: app:4000
     ports:
       - "8080:80"
 
 volumes:
-  our52_db:
-  our52_wa:
+  our52_data:

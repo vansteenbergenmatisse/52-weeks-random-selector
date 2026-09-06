@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../platform/db/prisma.js";
+import { env } from "../../platform/config/env.js";
 import { logger } from "../../platform/logger/logger.js";
 import { cycleIsComplete } from "../../shared/time.js";
 import * as selection from "../selection/service.js";
@@ -70,7 +71,10 @@ export async function tick(now: Date = new Date()): Promise<void> {
       const period = await selection.ensureCurrentPeriod(collection.id);
       const dueForSelection = collection.autoSelect && now.getTime() >= period.scheduledAt.getTime();
       const notifyAt = notifyInstant(collection, period);
-      const dueForNotify = collection.notifyEnabled && now.getTime() >= notifyAt.getTime();
+      // Reminders are opt-in: never fire until the couple has completed WhatsApp
+      // activation (phone + linked session + email), even if notify is toggled on.
+      const notifyDue = collection.notifyEnabled && now.getTime() >= notifyAt.getTime();
+      const dueForNotify = notifyDue && (await whatsapp.isActivated(collection.coupleId));
 
       // 1) Selection first, so a co-due notification can carry the fresh result.
       if (dueForSelection) {
@@ -110,6 +114,23 @@ export async function tick(now: Date = new Date()): Promise<void> {
       logger.error({ err: String(err), collectionId: collection.id }, "Worker tick error for collection");
     }
   }
+}
+
+/**
+ * Full scheduling startup: reconnect any previously-paired WhatsApp sessions
+ * (best effort) and begin the tick loop. Shared by the standalone worker
+ * process and the API process (single-service SQLite deploy runs it inline).
+ */
+export async function startScheduling(): Promise<void> {
+  if (env.WHATSAPP_ENABLED) {
+    const sessions = await prisma.whatsAppSession.findMany({ where: { status: "connected" } });
+    for (const s of sessions) {
+      whatsapp.connect(s.coupleId).catch((err) =>
+        logger.warn({ err: String(err), coupleId: s.coupleId }, "WhatsApp reconnect failed"),
+      );
+    }
+  }
+  startWorkerLoop(env.WORKER_TICK_SECONDS);
 }
 
 let timer: NodeJS.Timeout | null = null;

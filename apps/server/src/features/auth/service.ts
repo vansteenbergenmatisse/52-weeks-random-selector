@@ -163,7 +163,9 @@ export async function acceptInvitation(
         await tx.membership.create({ data: { coupleId: inv.coupleId, userId, role: "member" } });
         return { coupleId: inv.coupleId };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      // SQLite serializes writes with a single database-wide lock, so the
+      // two-person cap holds without an explicit isolation level (which SQLite
+      // doesn't accept). The unique(coupleId,userId) + count check still guard it.
     );
 
   // Retry once on a serialization conflict (concurrent acceptance).

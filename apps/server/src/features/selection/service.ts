@@ -82,6 +82,27 @@ function snapshotData(entry: {
 }
 
 /**
+ * Load the current period's result together with whether its latest pick is
+ * still a LIVE pool entry (present and not soft-deleted). A pick that was
+ * removed from the pool must never keep showing as "this week's pick".
+ */
+async function loadCurrentResult(periodId: string) {
+  const result = await prisma.weeklyResult.findUnique({
+    where: { periodId },
+    include: {
+      revisions: {
+        orderBy: { revisionNumber: "desc" },
+        take: 1,
+        include: { entry: { select: { deletedAt: true } } },
+      },
+    },
+  });
+  const pick = result?.revisions[0] ?? null;
+  const pickLive = !!(pick && pick.entryId && pick.entry && pick.entry.deletedAt === null);
+  return { result, pick, pickLive };
+}
+
+/**
  * Perform (or reveal) the weekly selection. The server picks and persists the
  * winner BEFORE the client animates. Concurrent callers converge on ONE result
  * thanks to the unique(periodId) constraint.
@@ -97,9 +118,16 @@ export async function spin(
   await assertCollectionInCouple(collectionId, coupleId);
   const period = await ensureCurrentPeriod(collectionId);
 
-  // Fast path: result already exists → reveal, never re-draw.
-  const existing = await prisma.weeklyResult.findUnique({ where: { periodId: period.id } });
-  if (existing) return { created: false, state: await getCurrentState(coupleId, collectionId) };
+  // Fast path: a result already exists. Reveal it ONLY if its pick is still a
+  // live pool entry. If the pick was removed from the pool, discard this week's
+  // stale result and draw a fresh one — so an emptied pool never replays a
+  // ghost pick. (Past weeks are untouched: spin only ever acts on the current
+  // period; history reads immutable snapshots separately.)
+  const { result: existing, pickLive } = await loadCurrentResult(period.id);
+  if (existing) {
+    if (pickLive) return { created: false, state: await getCurrentState(coupleId, collectionId) };
+    await prisma.weeklyResult.delete({ where: { id: existing.id } });
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -209,7 +237,9 @@ export async function reroll(
         await tx.entry.update({ where: { id: entry.id }, data: { status: "selected" } });
         return { replaced: true as const };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      // SQLite serializes writes globally, so no explicit isolation level is
+      // needed (or accepted). The optimistic lock on currentRevisionNumber above
+      // still guarantees exactly one reroll wins.
     );
 
     if (outcome.replaced) {
@@ -238,26 +268,13 @@ export async function markCompleted(coupleId: string, collectionId: string) {
     await tx.weeklyResult.update({ where: { id: result.id }, data: { completedAt: new Date() } });
     const entryId = result.revisions[0]?.entryId;
     if (entryId) {
-      const picked = await tx.entry.update({
+      // Complete only the picked entry. Any other copies of the same movie stay
+      // in the pool — watching it once shouldn't sweep the film away, so it can
+      // still come up again for a rerun.
+      await tx.entry.update({
         where: { id: entryId },
         data: { status: "completed" },
-        select: { tmdbId: true },
       });
-      // A movie can be added more than once (duplicate imports). Once it's
-      // watched, take EVERY copy out of the pool so it can't be shown or picked
-      // again — completing one entry should retire the whole movie.
-      if (picked.tmdbId != null) {
-        await tx.entry.updateMany({
-          where: {
-            collectionId,
-            tmdbId: picked.tmdbId,
-            id: { not: entryId },
-            deletedAt: null,
-            status: { in: ["available", "selected"] },
-          },
-          data: { status: "completed" },
-        });
-      }
     }
   });
   publish({ type: "result.changed", coupleId, collectionId });
@@ -299,20 +316,21 @@ export interface ResultView {
 export async function getCurrentState(coupleId: string, collectionId: string): Promise<CurrentState> {
   await assertCollectionInCouple(collectionId, coupleId);
   const period = await ensureCurrentPeriod(collectionId);
-  const result = await prisma.weeklyResult.findUnique({
-    where: { periodId: period.id },
-    include: { revisions: { orderBy: { revisionNumber: "desc" }, take: 1 } },
-  });
+  const { result, pick, pickLive } = await loadCurrentResult(period.id);
   const availableCount = await prisma.entry.count({
     where: { collectionId, deletedAt: null, status: "available" },
   });
 
+  // Only surface a result whose pick is still in the pool. A removed pick (its
+  // entry soft-deleted) leaves the week re-spinnable instead of replaying a ghost.
+  const show = !!(result && pick && pickLive);
+
   let view: ResultView | null = null;
-  if (result && result.revisions[0]) {
-    const r = result.revisions[0];
+  if (show) {
+    const r = pick!;
     view = {
-      weeklyResultId: result.id,
-      revision: result.currentRevisionNumber,
+      weeklyResultId: result!.id,
+      revision: result!.currentRevisionNumber,
       title: r.snapTitle,
       description: r.snapDescription,
       emoji: r.snapEmoji,
@@ -331,12 +349,12 @@ export async function getCurrentState(coupleId: string, collectionId: string): P
     weekIndex: period.weekIndex,
     cycleIndex: period.cycleIndex,
     periodStart: period.periodStart.toISOString(),
-    hasResult: !!result,
-    completed: !!result?.completedAt,
+    hasResult: show,
+    completed: show ? !!result!.completedAt : false,
     availableCount,
-    revision: result?.currentRevisionNumber ?? 0,
+    revision: show ? result!.currentRevisionNumber : 0,
     result: view,
-    action: result ? "reveal" : "spin",
+    action: show ? "reveal" : "spin",
   };
 }
 

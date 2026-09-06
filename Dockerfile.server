@@ -1,10 +1,9 @@
-# Our 52 — API + worker image (shared). Runs via tsx.
+# Our 52 — single app image (API + inline scheduling worker). Runs via tsx.
 FROM node:22-bookworm-slim
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-# Skip Chromium download; WhatsApp (optional) is disabled by default.
-ENV PUPPETEER_SKIP_DOWNLOAD=true
+# WhatsApp (optional) uses Baileys — a pure WebSocket client, no browser needed.
 RUN corepack enable
 
 WORKDIR /app
@@ -12,7 +11,7 @@ WORKDIR /app
 # Install workspace deps (server only needs its own + root manifest).
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY apps/server/package.json apps/server/package.json
-RUN pnpm install --filter @our52/server... --prod=false
+RUN pnpm install --filter @our52/server... --prod=false --frozen-lockfile
 
 # App source
 COPY apps/server ./apps/server
@@ -21,5 +20,7 @@ RUN pnpm --filter @our52/server exec prisma generate
 WORKDIR /app/apps/server
 EXPOSE 4000
 
-# Default command runs the API; the worker service overrides it in compose.
-CMD ["pnpm", "start"]
+# Applies migrations, seeds the couple (idempotent), then starts the API with the
+# scheduling worker inline (RUN_WORKER defaults true). Baked into the image so it
+# runs even if the platform doesn't apply railway.json's startCommand.
+CMD ["pnpm", "start:prod"]

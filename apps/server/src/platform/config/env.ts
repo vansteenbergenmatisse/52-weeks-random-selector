@@ -36,11 +36,13 @@ const schema = z.object({
   DEFAULT_WEEKDAY: z.coerce.number().min(0).max(6).default(0),
   DEFAULT_TIME: z.string().default("20:00"),
   WORKER_TICK_SECONDS: z.coerce.number().default(30),
+  // Run the scheduling worker inline in the API process (single-service SQLite
+  // deploy). Set false to run a dedicated worker process instead.
+  RUN_WORKER: bool(true),
   TMDB_API_KEY: z.string().optional().default(""),
   TMDB_IMAGE_BASE: z.string().default("https://image.tmdb.org/t/p"),
   WHATSAPP_ENABLED: bool(false),
   WHATSAPP_SESSION_DIR: z.string().default("./data/whatsapp"),
-  WHATSAPP_CHROME_PATH: z.string().optional().default(""),
   // Auto-emoji for date ideas (optional — falls back to a keyword map without it).
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   ANTHROPIC_MODEL: z.string().default("claude-haiku-4-5-20251001"),

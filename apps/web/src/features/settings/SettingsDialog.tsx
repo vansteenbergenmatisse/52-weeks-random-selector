@@ -206,12 +206,39 @@ export function SettingsDialog({
 
         <div className="border-t border-line pt-4 space-y-3">
           <Toggle checked={c.autoSelect} onChange={(v) => patch("autoSelect", v)} label="Automatic weekly selection (draws even when nobody's here)" />
-          <Toggle checked={c.notifyEnabled} onChange={(v) => patch("notifyEnabled", v)} label="Send this collection's weekly reminder on WhatsApp" />
+          <Toggle
+            checked={c.notifyEnabled}
+            onChange={(v) => patch("notifyEnabled", v)}
+            label="Send this collection's weekly reminder on WhatsApp"
+            disabled={!wa?.activated}
+          />
+          {!wa?.activated && (
+            <p className="text-faint text-xs">
+              🔒 Finish WhatsApp activation below (phone, linked device, and email) to turn reminders on.
+            </p>
+          )}
         </div>
 
         {/* ── Reminders: shared WhatsApp connection + recipients ── */}
         <div className="border-t border-line pt-4 space-y-3">
           <h3 className="u-display text-sm text-ink">WhatsApp reminders (shared)</h3>
+
+          {/* One-time activation checklist — all three are required before the
+              reminder toggle above unlocks. */}
+          <div className="rounded-lg bg-panel-2 border border-line p-3">
+            <p className="u-label mb-2">Activation · required to send reminders</p>
+            <ul className="space-y-1 text-sm text-ink">
+              <li>{wa?.hasPhone ? "✅" : "⬜"} Add a recipient phone number</li>
+              <li>{wa?.linked ? "✅" : "⬜"} Link WhatsApp (scan the QR)</li>
+              <li>{wa?.hasEmail ? "✅" : "⬜"} Add an email for calendar invites</li>
+            </ul>
+            <p className={`text-xs mt-2 ${wa?.activated ? "text-accent" : "text-faint"}`}>
+              {wa?.activated
+                ? "All set — reminders can be enabled above."
+                : "Complete all three, then turn on the reminder toggle."}
+            </p>
+          </div>
+
           <div className="rounded-lg bg-panel-2 border border-line p-3 flex items-center justify-between">
             <div>
               <p className="u-label">Connection</p>

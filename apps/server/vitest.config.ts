@@ -8,10 +8,11 @@ export default defineConfig({
     fileParallelism: false, // tests share one database; run serially
     hookTimeout: 30000,
     testTimeout: 30000,
+    globalSetup: "./test/globalSetup.ts", // creates the SQLite schema once
     env: {
       NODE_ENV: "test",
       DEMO_MODE: "true",
-      DATABASE_URL: process.env.TEST_DATABASE_URL ?? "postgresql://matissevansteenbergen@localhost:5432/our52_test",
+      DATABASE_URL: process.env.TEST_DATABASE_URL ?? "file:./test.db",
       SESSION_SECRET: "test-secret-test-secret-test-secret",
       DEFAULT_TIMEZONE: "America/New_York",
       WHATSAPP_ENABLED: "false",

@@ -53,18 +53,21 @@ export function Toggle({
   checked,
   onChange,
   label,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="flex items-center gap-3 text-sm text-ink"
+      className={`flex items-center gap-3 text-sm text-ink text-left ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
     >
       <span
         className={`relative h-6 w-11 rounded-full transition ${checked ? "bg-accent" : "bg-panel-3 border border-line"}`}
