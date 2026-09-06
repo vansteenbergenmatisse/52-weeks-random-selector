@@ -112,14 +112,16 @@ export async function updateCollection(
   collectionId: string,
   patch: Record<string, unknown>,
 ) {
-  await assertCollectionInCouple(collectionId, coupleId);
+  const current = await assertCollectionInCouple(collectionId, coupleId);
   const data: Record<string, unknown> = {};
   for (const key of SETTABLE) {
     if (key in patch) data[key] = patch[key];
   }
-  // Reminders are opt-in: they can only be enabled once WhatsApp activation is
-  // complete (phone linked + email). This mirrors the disabled toggle in the UI.
-  if (data.notifyEnabled === true) {
+  // Reminders are opt-in: they can only be TURNED ON once WhatsApp activation is
+  // complete (phone linked + email). Guarding only the off->on transition keeps
+  // unrelated saves working even if the couple later disconnects. Mirrors the
+  // disabled toggle in the UI.
+  if (data.notifyEnabled === true && !current.notifyEnabled) {
     const { isActivated } = await import("../whatsapp/manager.js");
     if (!(await isActivated(coupleId))) {
       throw Errors.badRequest("Connect WhatsApp (phone, linked device, and email) before enabling reminders.");
