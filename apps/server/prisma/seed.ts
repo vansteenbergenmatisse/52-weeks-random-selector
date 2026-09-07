@@ -21,35 +21,9 @@ function firstSunday8pm(): Date {
   return dt.toUTC().toJSDate();
 }
 
-const DATE_IDEAS: Array<{ title: string; emoji: string; description?: string }> = [
-  { title: "Sunset picnic", emoji: "🌅", description: "Bring a blanket and your favorite snacks." },
-  { title: "Cook a new recipe together", emoji: "🍝", description: "Pick a cuisine neither of us has tried." },
-  { title: "Farmers market morning", emoji: "🧺" },
-  { title: "Stargazing drive", emoji: "🌌", description: "Head out of town where it's dark." },
-  { title: "Board game café", emoji: "🎲" },
-  { title: "Bike ride + coffee", emoji: "🚲" },
-  { title: "Museum wander", emoji: "🖼️" },
-  { title: "Home spa night", emoji: "🧖", description: "Face masks, candles, no phones." },
-  { title: "Bookstore date", emoji: "📚", description: "Each pick a book for the other." },
-  { title: "Sunrise hike", emoji: "⛰️" },
-  { title: "Karaoke night", emoji: "🎤" },
-  { title: "Pottery class", emoji: "🏺" },
-];
-
-const MOVIE_IDEAS: Array<{ title: string; year: number; description?: string }> = [
-  { title: "Everything Everywhere All at Once", year: 2022 },
-  { title: "The Grand Budapest Hotel", year: 2014 },
-  { title: "Spirited Away", year: 2001 },
-  { title: "La La Land", year: 2016 },
-  { title: "Parasite", year: 2019 },
-  { title: "Amélie", year: 2001 },
-  { title: "Knives Out", year: 2019 },
-  { title: "Past Lives", year: 2023 },
-  { title: "Paddington 2", year: 2017 },
-  { title: "Arrival", year: 2016 },
-  { title: "The Princess Bride", year: 1987 },
-  { title: "In the Mood for Love", year: 2000 },
-];
+// NOTE: There is intentionally NO example date/movie seed data. A fresh space
+// starts empty and the couple adds only their own ideas — the app must never
+// inject "random" demo entries. (Removed for good; see PLAN.md §0.)
 
 async function ensureUser(username: string, displayName: string, avatarUrl: string) {
   const existing = await prisma.user.findUnique({ where: { username } });
@@ -127,42 +101,11 @@ async function main() {
     });
   }
 
-  // Example ideas are OFF by default — the couple starts empty and adds their own.
-  // Set SEED_EXAMPLES=true to populate the demo date/movie ideas instead.
-  const seedExamples = process.env.SEED_EXAMPLES === "true";
-
-  // Seed entries only if enabled AND the collection is empty (keeps seed idempotent).
-  const datesCount = await prisma.entry.count({ where: { collectionId: dates.id } });
-  if (seedExamples && datesCount === 0) {
-    for (let i = 0; i < DATE_IDEAS.length; i++) {
-      const idea = DATE_IDEAS[i]!;
-      await prisma.entry.create({
-        data: {
-          collectionId: dates.id,
-          contributorId: i % 2 === 0 ? teresa.id : matisse.id,
-          title: idea.title,
-          emoji: idea.emoji,
-          description: idea.description ?? null,
-        },
-      });
-    }
-  }
-
-  const moviesCount = await prisma.entry.count({ where: { collectionId: movies.id } });
-  if (seedExamples && moviesCount === 0) {
-    for (let i = 0; i < MOVIE_IDEAS.length; i++) {
-      const idea = MOVIE_IDEAS[i]!;
-      await prisma.entry.create({
-        data: {
-          collectionId: movies.id,
-          contributorId: i % 2 === 0 ? matisse.id : teresa.id,
-          title: idea.title,
-          releaseYear: idea.year,
-          description: idea.description ?? null,
-        },
-      });
-    }
-  }
+  // No example ideas are ever seeded. Both collections start empty; the couple
+  // fills them with their own dates/movies. `dates` and `movies` exist only to
+  // guarantee the two default collections are present.
+  void dates;
+  void movies;
 
   console.log(`Done. Shared space "${coupleId}" ready.`);
   console.log("Enter via the one-tap Teresa/Matisse picker (gated by SPACE_PASSCODE when set).");

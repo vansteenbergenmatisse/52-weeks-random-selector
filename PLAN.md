@@ -18,8 +18,11 @@ count. Spin already refuses an empty pool (no ghost). The "random ideas" were th
    `POST /api/collections/:id/reset` + a 🧨 button in that collection's Settings. Wipes ALL ideas
    (incl. the current pick, completed, and soft-deleted), every weekly result, and history, then
    restarts the cycle from a fresh slot. Pool → truly 0, no pick shows.
-2. ✅ **[Seed] No example ideas by default.** The 12 demo dates / 12 demo movies now only seed when
-   `SEED_EXAMPLES=true`; a fresh space starts **empty** (no "random shit added").
+2. ✅ **[Seed] No example ideas — EVER.** The demo date/movie arrays and the `SEED_EXAMPLES`
+   branch were **removed from `seed.ts` entirely** (2026-09-07). The seed now only ensures the
+   couple + the two default (empty) collections exist; it is physically incapable of inserting any
+   date or movie. A fresh space starts **empty** and stays that way. Stale seed rows from an earlier
+   boot were wiped from prod via per-collection Reset-to-zero.
 3. ✅ **[Skip] Confirmed correct** — `skip()` returns the skipped idea to the pool (`available`) and
    draws a different one; locked in with a regression test. No fix needed.
 
@@ -432,8 +435,8 @@ The test DB (`apps/server/prisma/test.db`) is created fresh each run by
 Core: `DATABASE_URL` (SQLite `file:` URL — `file:./dev.db` locally, `file:/data/our52.db`
 on a Railway Volume), `PORT, APP_BASE_URL, SESSION_SECRET, CORS_ORIGINS, DEMO_MODE,
 NODE_ENV, DEFAULT_TIMEZONE/WEEKDAY/TIME, WORKER_TICK_SECONDS, RUN_WORKER` (default true —
-inline worker), `VITE_API_BASE`. `SEED_EXAMPLES` (default **false**) — set `true` to seed the
-12 demo dates / 12 demo movies; otherwise a fresh space starts **empty**.
+inline worker), `VITE_API_BASE`. (There is **no** example-seed flag anymore — the demo
+date/movie arrays were removed from `seed.ts`, so a fresh space always starts **empty**.)
 
 Integrations (all optional; features degrade gracefully):
 - `TMDB_API_KEY` — **SET** (v4 read-access token). Movie search/discover/posters/IMDb live.
