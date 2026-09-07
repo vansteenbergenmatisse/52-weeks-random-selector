@@ -135,16 +135,16 @@ export interface PlaceResult {
 
 export interface WhatsAppStatus {
   enabled: boolean;
-  status: "disconnected" | "qr" | "connecting" | "connected";
-  phone: string | null;
-  qr: string | null;
-  deliveryMode: "group" | "individuals";
-  groupId: string | null;
-  recipients: string[];
-  /** Activation breakdown — reminders are gated until `activated` is true. */
-  hasPhone: boolean;
-  linked: boolean;
-  hasEmail: boolean;
+  /** The logged-in user's OWN WhatsApp link. */
+  you: {
+    status: "disconnected" | "qr" | "connecting" | "connected";
+    phone: string | null;
+    qr: string | null;
+    linked: boolean;
+  };
+  /** The partner's link state (read-only). Null if there's no partner yet. */
+  partner: { name: string; linked: boolean } | null;
+  /** Reminders are gated until BOTH partners are linked. */
   activated: boolean;
   note: string;
 }

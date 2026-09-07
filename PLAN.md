@@ -7,7 +7,17 @@
 
 ## 0. ACTIVE TODO (2026-09-07) — honest status
 
-### This session's changes (2026-09-07, later) — WhatsApp self-config + keyless calendar
+### This session's changes (2026-09-07, latest) — WhatsApp per-user linking + mutual reminders
+
+Reworked WhatsApp from ONE shared couple connection to **per-person linking**. Matisse and Teresa
+each link their own phone (separate `WhatsAppSession` keyed by `userId`, separate QR). **No
+recipient number field** — the number comes from each person's link. **Reminders are mutual and
+cross-sent**: Teresa's weekly pick is sent FROM Matisse's WhatsApp and vice-versa, so both must be
+linked. Settings shows "Your WhatsApp (just you)" + the partner's link status. Collection settings
+and calendar stay global/shared. Spec: `docs/superpowers/specs/2026-09-07-whatsapp-per-user-linking-design.md`.
+All ✅ in code (83 tests); still needs `WHATSAPP_ENABLED=true` + each partner scanning their QR.
+
+### Earlier this session (2026-09-07, later) — WhatsApp self-config + keyless calendar
 
 Reduce the manual setup so the couple can just link a phone and test. **All ✅ done in code
 (80 tests pass); WhatsApp still needs the `WHATSAPP_ENABLED=true` flag + one live scan.**
@@ -64,7 +74,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: LIVE on Railway, running, tested.** 80 server tests pass; web build + server
+**Status: LIVE on Railway, running, tested.** 83 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
 **Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
@@ -332,22 +342,23 @@ carry an optional **cost** band and a **what-to-prepare** note (shown on pool ca
 time, DST-aware via Luxon; `tick()` auto-selects (if due) and notifies (saved result
 or a reminder), both `JobRun`-guarded; only the CURRENT period is processed.
 
-**WhatsApp** (`features/whatsapp/*`): the **paired phone is the sender** (a
-"userbot" via **Baileys** — pure WebSocket, no Chromium; `baileysAdapter.ts` implements the
-library-agnostic `WhatsAppAdapter`). Shared selection logic drives web + WhatsApp. Inbound
-🔄/✅ reactions and REROLL/DONE replies are deduped, authorised, and guarded against
-superseded results. Outbox reconciles uncertain sends. **Currently the fixture
-adapter is active** (`WHATSAPP_ENABLED=false`) — messages are recorded, not delivered.
-**Recipient is auto-derived from the connection**: on connect Baileys reports the paired
-device's own number (`sock.user.id` → `session.phone`), and `resolveTargets` defaults to it when
-no recipient is configured — so reminders + the Test button reach the linked phone with nothing
-typed in. Extra numbers can still be added in Settings (E.164, country-prefix picker) to notify
-others; an explicit recipient/group overrides the fallback.
-**Reminders are opt-in**: they never fire until the couple completes **activation**, which is now
-just **a linked WhatsApp session** (`getActivation.activated = linked && hasPhone`, and a linked
-phone satisfies `hasPhone`). The calendar-email requirement was **decoupled** — it has nothing to
-do with sending a reminder. The reminder toggle is disabled until linked; the worker +
-`updateCollection` both enforce the gate (`whatsapp.isActivated`).
+**WhatsApp** (`features/whatsapp/*`): **per-user linking + mutual reminders** (design:
+`docs/superpowers/specs/2026-09-07-whatsapp-per-user-linking-design.md`). Each partner links their
+OWN phone — `WhatsAppSession` is keyed by `userId` (unique), Baileys auth lives under
+`WHATSAPP_SESSION_DIR/user-<userId>`, adapters are keyed by userId, and on connect Baileys reports
+that device's own number (`sock.user.id` → `session.phone`). **There is no recipient field.**
+**Reminders are cross-sent** (`enqueueBroadcast`): the weekly pick Teresa receives is sent FROM
+Matisse's linked WhatsApp and vice-versa — one `OutboundMessage` per recipient stamped with
+`senderUserId`, drained on that sender's session (`flushOutboxForUser`). A direction is created
+only when the recipient has a linked number and the sender is connected, so **both must be linked**.
+The **Test** button (`sendTest`) sends from your session to your partner (self-fallback if they're
+not linked). Inbound 🔄/✅/👍/REROLL/DONE are deduped, authorised **against the couple's own linked
+numbers**, and guarded against superseded results. Outbox reconciles uncertain sends per user.
+**Activation** = `getActivation.activated` is true only when **both partners are linked**; the
+per-collection reminder toggle stays global/shared but is gated on it (worker + `updateCollection`
+enforce `isActivated`). `WhatsAppConfig` (old recipients/group) is **dormant** — no longer used.
+**Currently the fixture adapter is active** (`WHATSAPP_ENABLED=false`) — messages are recorded,
+not delivered; set the flag on the server for real pairing.
 
 **Calendar** (`features/calendar/*`): the app's **"Add to calendar" button is keyless** —
 `GET /api/collections/:id/calendar/current` (`getCurrentInvite`) returns the pick's `.ics` text
@@ -370,7 +381,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 80 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 83 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```

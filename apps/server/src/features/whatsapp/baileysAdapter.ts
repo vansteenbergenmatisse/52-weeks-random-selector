@@ -38,7 +38,10 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(public readonly coupleId: string) {}
+  constructor(
+    public readonly coupleId: string,
+    public readonly userId: string,
+  ) {}
 
   /**
    * Schedule a reconnect with capped exponential backoff + jitter. Baileys drops
@@ -98,7 +101,7 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
       }
     };
 
-    const dir = join(env.WHATSAPP_SESSION_DIR, `couple-${this.coupleId}`);
+    const dir = join(env.WHATSAPP_SESSION_DIR, `user-${this.userId}`);
     const { state, saveCreds } = await useMultiFileAuthState(dir);
 
     const sock = makeWASocket({

@@ -43,6 +43,7 @@ export type InboundHandler = (coupleId: string, event: InboundEvent) => Promise<
 
 export interface WhatsAppAdapter {
   readonly coupleId: string;
+  readonly userId: string;
   status(): WAStatus;
   lastQr(): string | null;
   /** Begin pairing; resolves once the client is initialising (QR may follow). */
@@ -65,7 +66,10 @@ export class FixtureAdapter implements WhatsAppAdapter {
   public readonly sent: Array<{ chatId: string; body: string; id: string }> = [];
   private counter = 0;
 
-  constructor(public readonly coupleId: string) {}
+  constructor(
+    public readonly coupleId: string,
+    public readonly userId: string = "",
+  ) {}
 
   status(): WAStatus {
     return this._status;

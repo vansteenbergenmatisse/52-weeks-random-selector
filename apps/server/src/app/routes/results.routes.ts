@@ -3,7 +3,7 @@ import { z } from "zod";
 import * as selection from "../../features/selection/service.js";
 import * as whatsapp from "../../features/whatsapp/manager.js";
 import * as calendar from "../../features/calendar/service.js";
-import { enqueue } from "../../features/whatsapp/outbox.js";
+import { enqueueBroadcast } from "../../features/whatsapp/outbox.js";
 import { formatResultMessage, formatReroll } from "../../features/whatsapp/format.js";
 import { prisma } from "../../platform/db/prisma.js";
 import { parse, requireCouple } from "../http.js";
@@ -30,7 +30,7 @@ export async function resultRoutes(app: FastifyInstance) {
     const res = await selection.spin(coupleId, collectionId, { userId: user.id, source: "web" });
     if (res.created && res.state.result) {
       const meta = await collectionMeta(collectionId);
-      await enqueue({
+      await enqueueBroadcast({
         coupleId,
         kind: "result",
         collectionId,
@@ -55,7 +55,7 @@ export async function resultRoutes(app: FastifyInstance) {
     });
     if (res.replaced && res.state.result) {
       const meta = await collectionMeta(collectionId);
-      await enqueue({
+      await enqueueBroadcast({
         coupleId,
         kind: "reroll",
         collectionId,
@@ -75,7 +75,7 @@ export async function resultRoutes(app: FastifyInstance) {
     const res = await selection.skip(coupleId, collectionId, { userId: user.id, source: "web" });
     if (res.skipped && res.state.result) {
       const meta = await collectionMeta(collectionId);
-      await enqueue({
+      await enqueueBroadcast({
         coupleId,
         kind: "result",
         collectionId,

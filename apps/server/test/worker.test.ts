@@ -6,18 +6,15 @@ import { addEntries, makeCouple, resetDb } from "./helpers.js";
 beforeEach(resetDb);
 afterAll(() => prisma.$disconnect());
 
-/** Complete WhatsApp activation: phone recipient + linked session + email. */
+/** Complete WhatsApp activation: BOTH partners link their own phone (per-user
+ *  sessions), plus calendar emails for the optional prompt. */
 async function activate(coupleId: string) {
-  await prisma.whatsAppConfig.upsert({
-    where: { coupleId },
-    update: { recipients: JSON.stringify(["15551230000"]) },
-    create: { coupleId, deliveryMode: "individuals", recipients: JSON.stringify(["15551230000"]) },
-  });
-  await prisma.whatsAppSession.upsert({
-    where: { coupleId },
-    update: { status: "connected" },
-    create: { coupleId, status: "connected" },
-  });
+  const members = await prisma.membership.findMany({ where: { coupleId }, orderBy: { joinedAt: "asc" } });
+  for (const [i, m] of members.entries()) {
+    await prisma.whatsAppSession.create({
+      data: { coupleId, userId: m.userId, status: "connected", phone: `1555123000${i}` },
+    });
+  }
   await prisma.calendarConfig.upsert({
     where: { coupleId },
     update: { enabled: true, emails: JSON.stringify(["teresa@x.com", "matisse@x.com"]) },
@@ -70,10 +67,7 @@ describe("scheduling worker", () => {
   it("does NOT notify until WhatsApp activation is complete", async () => {
     const { couple, dates, a } = await makeCouple();
     await addEntries(dates.id, a.id, ["One"]);
-    // Phone set but session not linked and no email → not activated.
-    await prisma.whatsAppConfig.create({
-      data: { coupleId: couple.id, deliveryMode: "individuals", recipients: JSON.stringify(["15551230000"]) },
-    });
+    // Neither partner has linked their WhatsApp → not activated → nothing sends.
     await prisma.collection.update({
       where: { id: dates.id },
       data: { autoSelect: false, notifyEnabled: true, cycleStartDate: new Date(Date.now() - 2 * 864e5) },

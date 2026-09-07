@@ -3,7 +3,7 @@ import { prisma } from "../../platform/db/prisma.js";
 import { logger } from "../../platform/logger/logger.js";
 import { eventKey } from "../../platform/security/crypto.js";
 import type { InboundEvent } from "./adapter.js";
-import { enqueue } from "./outbox.js";
+import { coupleMembers, enqueueBroadcast } from "./outbox.js";
 import * as selection from "../selection/service.js";
 import { addResultToCalendar } from "../calendar/service.js";
 import { formatReroll, formatReminder, formatNoAlternative, formatAmbiguous, formatCalendarBooked } from "./format.js";
@@ -17,22 +17,12 @@ function normalizePhone(id: string): string {
 }
 
 async function isAuthorizedSender(coupleId: string, event: InboundEvent): Promise<boolean> {
-  const cfg = await prisma.whatsAppConfig.findUnique({ where: { coupleId } });
-  if (!cfg) return false;
-  // Group mode: a command in the configured group is authorized. Replies carry
-  // the chat id so we can verify it directly; reactions don't, so those fall
-  // through to the recipient allowlist below (a member's own number).
-  if (cfg.deliveryMode === "group" && cfg.groupId && event.kind === "reply" && event.chatId === cfg.groupId) {
-    return true;
-  }
-  let recipients: string[] = [];
-  try {
-    recipients = JSON.parse(cfg.recipients);
-  } catch {
-    recipients = [];
-  }
+  // A command is authorized when it comes from one of the couple's own linked
+  // WhatsApp numbers (either partner). No manual recipient list any more.
+  const members = await coupleMembers(coupleId);
+  const numbers = members.map((m) => m.phone).filter((p): p is string => !!p).map(normalizePhone);
   const sender = normalizePhone(event.senderId);
-  return recipients.map(normalizePhone).includes(sender);
+  return numbers.includes(sender);
 }
 
 async function alreadyProcessed(coupleId: string, key: string): Promise<boolean> {
@@ -91,7 +81,7 @@ async function handleReaction(coupleId: string, event: Extract<InboundEvent, { k
     const res = await addResultToCalendar(coupleId, msg.collectionId);
     if (res.ok) {
       const state = await selection.getCurrentState(coupleId, msg.collectionId);
-      await enqueue({
+      await enqueueBroadcast({
         coupleId,
         kind: "result",
         collectionId: msg.collectionId,
@@ -150,7 +140,7 @@ async function handleReply(coupleId: string, event: Extract<InboundEvent, { kind
     if (collections.length === 1) {
       collectionId = collections[0]!.id;
     } else {
-      await enqueue({ coupleId, kind: "reminder", body: formatAmbiguous(collections) });
+      await enqueueBroadcast({ coupleId, kind: "reminder", body: formatAmbiguous(collections) });
       return;
     }
   }
@@ -176,7 +166,7 @@ async function runCommand(
 
   if (action === "done") {
     await selection.markCompleted(coupleId, collectionId);
-    await enqueue({
+    await enqueueBroadcast({
       coupleId,
       kind: "result",
       collectionId,
@@ -191,7 +181,7 @@ async function runCommand(
     expectedRevision: ctx.expectedRevision,
   });
   if (res.replaced) {
-    await enqueue({
+    await enqueueBroadcast({
       coupleId,
       kind: "reroll",
       collectionId,
@@ -200,9 +190,9 @@ async function runCommand(
       body: formatReroll(res.state, meta),
     });
   } else if (res.reason === "no_alternative") {
-    await enqueue({ coupleId, kind: "reroll", collectionId, body: formatNoAlternative(meta) });
+    await enqueueBroadcast({ coupleId, kind: "reroll", collectionId, body: formatNoAlternative(meta) });
   } else if (res.reason === "locked") {
-    await enqueue({
+    await enqueueBroadcast({
       coupleId,
       kind: "reroll",
       collectionId,

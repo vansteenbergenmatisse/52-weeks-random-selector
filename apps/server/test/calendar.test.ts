@@ -39,12 +39,12 @@ describe("calendar config + prompt", () => {
     expect(res.reason).toBe("not_configured");
   });
 
-  it("enqueues a '👍 add to calendar' prompt only when the couple has configured it", async () => {
-    const { couple, a, dates } = await makeCouple();
+  it("enqueues a '👍 add to calendar' prompt only when configured, cross-sent to both", async () => {
+    const { couple, a, b, dates } = await makeCouple();
     await addEntries(dates.id, a.id, ["One"]);
-    await prisma.whatsAppConfig.create({
-      data: { coupleId: couple.id, deliveryMode: "individuals", recipients: JSON.stringify(["+31612345678"]) },
-    });
+    // Both partners link their WhatsApp so a broadcast can actually go out.
+    await prisma.whatsAppSession.create({ data: { coupleId: couple.id, userId: a.id, status: "connected", phone: "111" } });
+    await prisma.whatsAppSession.create({ data: { coupleId: couple.id, userId: b.id, status: "connected", phone: "222" } });
 
     const meta = await prisma.collection.findUniqueOrThrow({
       where: { id: dates.id },
@@ -56,12 +56,12 @@ describe("calendar config + prompt", () => {
     await calendar.enqueueCalendarPromptIfConfigured(couple.id, meta, spin.state);
     expect(await prisma.outboundMessage.count({ where: { coupleId: couple.id, kind: "calendar_prompt" } })).toBe(0);
 
-    // Configure calendar, then it enqueues exactly one prompt.
+    // Configure calendar, then it enqueues one prompt PER partner (cross-sent).
     await prisma.calendarConfig.create({
       data: { coupleId: couple.id, enabled: true, emails: JSON.stringify(["a@x.com", "b@y.com"]) },
     });
     await calendar.enqueueCalendarPromptIfConfigured(couple.id, meta, spin.state);
-    expect(await prisma.outboundMessage.count({ where: { coupleId: couple.id, kind: "calendar_prompt" } })).toBe(1);
+    expect(await prisma.outboundMessage.count({ where: { coupleId: couple.id, kind: "calendar_prompt" } })).toBe(2);
   });
 });
 

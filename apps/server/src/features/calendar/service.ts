@@ -4,7 +4,7 @@ import { env, resendEnabled } from "../../platform/config/env.js";
 import { logger } from "../../platform/logger/logger.js";
 import { publish } from "../../platform/realtime/bus.js";
 import { buildIcs, googleCalendarUrl } from "./ics.js";
-import { enqueue } from "../whatsapp/outbox.js";
+import { enqueueBroadcast } from "../whatsapp/outbox.js";
 import { formatCalendarPrompt } from "../whatsapp/format.js";
 import { ensureCurrentPeriod, getCurrentState, type CurrentState } from "../selection/service.js";
 
@@ -212,7 +212,7 @@ export async function enqueueCalendarPromptIfConfigured(
     .setZone(collection.scheduleTimezone)
     .toFormat("cccc d LLL, h:mm a");
 
-  await enqueue({
+  await enqueueBroadcast({
     coupleId,
     kind: "calendar_prompt",
     collectionId: collection.id,

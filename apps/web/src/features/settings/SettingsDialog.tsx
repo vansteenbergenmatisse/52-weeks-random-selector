@@ -3,13 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, Toggle } from "../../components/ui/Dialog";
 import { api, ApiError } from "../../platform/api/client";
 import { useCalendar, useWhatsApp } from "../roulette/hooks";
-import { COUNTRIES, splitDial } from "./countries";
 import type { Collection } from "../../shared/types";
-
-interface Recipient {
-  dial: string;
-  national: string;
-}
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const ZONES = [
@@ -22,8 +16,6 @@ const ZONES = [
   "Asia/Tokyo",
   "Australia/Sydney",
 ];
-
-const E164 = /^\+[1-9]\d{7,14}$/;
 
 export function SettingsDialog({
   open,
@@ -41,17 +33,12 @@ export function SettingsDialog({
   // Shared WhatsApp + calendar config (couple-wide) loaded when the dialog opens.
   const { data: wa } = useWhatsApp(open);
   const { data: cal } = useCalendar(open);
-  const [recips, setRecips] = useState<Recipient[]>([]);
   const [waNote, setWaNote] = useState<string | null>(null);
   const [emailA, setEmailA] = useState("");
   const [emailB, setEmailB] = useState("");
   const [calEnabled, setCalEnabled] = useState(false);
   const [calNote, setCalNote] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!wa) return;
-    setRecips(wa.recipients.length ? wa.recipients.map(splitDial) : [{ dial: "+32", national: "" }]);
-  }, [wa?.recipients.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (cal) {
       setEmailA(cal.emails[0] ?? "");
@@ -107,49 +94,21 @@ export function SettingsDialog({
     }
   }
 
-  function setRecip(i: number, patch: Partial<Recipient>) {
-    setRecips((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  }
-
-  /** Start the WhatsApp connection so the QR appears to scan. Recipient numbers are
-   *  OPTIONAL — reminders default to the linked phone's own number, so linking alone
-   *  activates them. Any numbers typed in are saved as additional recipients. */
-  async function saveAndLink() {
+  /** Link the logged-in user's OWN WhatsApp — just starts their connection so the
+   *  QR appears. No number to type: the linked device's own number is used. */
+  async function linkMyWhatsApp() {
     setWaNote(null);
-    const list = recips
-      .filter((r) => r.national.trim())
-      .map((r) => `${r.dial}${r.national.replace(/\D/g, "")}`);
-    const bad = list.find((r) => !E164.test(r));
-    if (bad) {
-      setWaNote(`"${bad}" doesn't look right — check the number after the country code.`);
+    if (!wa?.enabled) {
+      setWaNote("WhatsApp isn't enabled on the server yet.");
       return;
     }
     setBusy(true);
     try {
-      // Only persist config when extra numbers were given; otherwise leave it empty
-      // and let the outbox fall back to the linked phone's own number.
-      if (list.length) {
-        await api.patch("/api/whatsapp/config", { deliveryMode: "individuals", recipients: list });
-      }
-      // Persist calendar emails too if given (optional — the keyless "Add to
-      // calendar" button works without them).
-      const emails = [emailA.trim(), emailB.trim()].filter(Boolean);
-      if (emails.length) {
-        await api.patch("/api/calendar/config", { enabled: true, emails });
-        setCalEnabled(true);
-      }
-      // Only start a real pairing when the server has WhatsApp enabled — otherwise
-      // the fixture adapter would report a fake "connected" with no phone linked.
-      if (wa?.enabled) {
-        await api.post("/api/whatsapp/connect");
-        setWaNote("Saved. Scan the QR below to finish linking.");
-      } else {
-        setWaNote("Saved. Enable WhatsApp on the server to pair a phone.");
-      }
+      await api.post("/api/whatsapp/connect");
+      setWaNote("Scan the QR below to finish linking your WhatsApp.");
       qc.invalidateQueries({ queryKey: ["whatsapp"] });
-      qc.invalidateQueries({ queryKey: ["calendar"] });
     } catch (err) {
-      setWaNote(err instanceof ApiError ? err.message : "Couldn't save & connect.");
+      setWaNote(err instanceof ApiError ? err.message : "Couldn't start linking.");
     } finally {
       setBusy(false);
     }
@@ -158,8 +117,12 @@ export function SettingsDialog({
   async function sendTest() {
     setWaNote(null);
     try {
-      await api.post("/api/whatsapp/test");
-      setWaNote(wa?.status === "connected" ? "Test message sent — check WhatsApp." : "Queued. Connect a phone to actually deliver it.");
+      const res = await api.post<{ ok: boolean; reason?: string; target?: string }>("/api/whatsapp/test");
+      if (res.ok) setWaNote(`Test message sent to ${res.target} — check WhatsApp.`);
+      else if (res.reason === "not_linked") setWaNote("Link your WhatsApp first, then send a test.");
+      else if (res.reason === "no_number") setWaNote("No number yet — finish linking, then try again.");
+      else setWaNote("Couldn't send the test.");
+      qc.invalidateQueries({ queryKey: ["whatsapp"] });
     } catch (err) {
       setWaNote(err instanceof ApiError ? err.message : "Could not send test.");
     }
@@ -177,7 +140,7 @@ export function SettingsDialog({
     }
   }
 
-  const waStatus = wa?.status ?? "disconnected";
+  const youStatus = wa?.you.status ?? "disconnected";
 
   return (
     <Dialog open={open} onClose={onClose} title={`${collection.name} settings`} width="max-w-lg">
@@ -239,140 +202,90 @@ export function SettingsDialog({
           />
           {!wa?.activated && (
             <p className="text-faint text-xs">
-              🔒 Link WhatsApp below (scan the QR) to turn reminders on — they go to the linked phone.
+              🔒 Both of you must link WhatsApp below to turn reminders on — you remind each other.
             </p>
           )}
         </div>
 
-        {/* ── Reminders: shared WhatsApp connection + recipients ── */}
+        {/* ── Your WhatsApp — personal, per-person link (not shared) ── */}
         <div className="border-t border-line pt-4 space-y-3">
-          <h3 className="u-display text-sm text-ink">WhatsApp reminders (shared)</h3>
+          <h3 className="u-display text-sm text-ink">Your WhatsApp <span className="text-faint font-normal">· just you</span></h3>
+          <p className="text-faint text-xs">
+            Link your own phone. Reminders are mutual — once you and your partner are both linked,
+            each of you gets the weekly pick from the other’s WhatsApp. Nothing else here changes for them.
+          </p>
 
-          {/* Live connection banner — reflects the real adapter state and prompts a
-              re-link when the session has dropped (reminders-only scope). */}
+          {/* Live banner for the logged-in user's OWN connection. */}
           {!wa?.enabled ? (
             <div className="rounded-lg border border-line bg-panel-2 p-3">
               <p className="text-sm text-ink font-semibold">WhatsApp delivery is off on the server</p>
               <p className="text-xs text-muted mt-1">
-                Fill in the details below now; set <code>WHATSAPP_ENABLED=true</code> on the server to pair a
-                phone and go live. Spinning, the pool, and calendar all work without it.
+                Set <code>WHATSAPP_ENABLED=true</code> on the server to link a phone. Spinning, the pool,
+                and calendar all work without it.
               </p>
             </div>
-          ) : waStatus === "connected" ? (
+          ) : youStatus === "connected" ? (
             <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
-              <p className="text-sm text-ink font-semibold">✅ Linked{wa?.phone ? ` as ${wa.phone}` : ""}</p>
-              <p className="text-xs text-muted mt-1">Reminders can send. The link self-heals if it briefly drops.</p>
+              <p className="text-sm text-ink font-semibold">✅ Your WhatsApp is linked{wa?.you.phone ? ` as ${wa.you.phone}` : ""}</p>
+              <p className="text-xs text-muted mt-1">The link self-heals if it briefly drops.</p>
             </div>
-          ) : waStatus === "qr" ? (
+          ) : youStatus === "qr" ? (
             <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
-              <p className="text-sm text-ink font-semibold">Scan the QR to link WhatsApp</p>
+              <p className="text-sm text-ink font-semibold">Scan the QR to link your WhatsApp</p>
               <p className="text-xs text-muted mt-1">Open WhatsApp → Linked devices → Link a device, then scan below.</p>
             </div>
-          ) : waStatus === "connecting" ? (
+          ) : youStatus === "connecting" ? (
             <div className="rounded-lg border border-line bg-panel-2 p-3">
               <p className="text-sm text-ink font-semibold">Connecting…</p>
-              <p className="text-xs text-muted mt-1">Hang on — a QR will appear if a phone needs to re-link.</p>
+              <p className="text-xs text-muted mt-1">Hang on — a QR will appear in a moment.</p>
             </div>
           ) : (
             <div className="rounded-lg border border-card-red/40 bg-card-red/10 p-3">
-              <p className="text-sm text-ink font-semibold">
-                {wa?.hasPhone ? "🔌 WhatsApp isn't linked right now" : "WhatsApp isn't linked yet"}
-              </p>
-              <p className="text-xs text-muted mt-1">
-                {wa?.hasPhone
-                  ? "The link dropped. Tap “Save & link WhatsApp” and scan the QR to keep reminders flowing."
-                  : "Tap “Save & link WhatsApp” and scan the QR to enable reminders — no number needed."}
-              </p>
+              <p className="text-sm text-ink font-semibold">Your WhatsApp isn’t linked yet</p>
+              <p className="text-xs text-muted mt-1">Tap “Link my WhatsApp” and scan the QR — no number to type.</p>
             </div>
           )}
 
-          {/* Activation — linking the phone is the ONLY requirement; its own number
-              becomes the default reminder recipient. */}
-          <div className="rounded-lg bg-panel-2 border border-line p-3">
-            <p className="u-label mb-2">Activation · required to send reminders</p>
-            <ul className="space-y-1 text-sm text-ink">
-              <li>{wa?.linked ? "✅" : "⬜"} Link WhatsApp (scan the QR)</li>
-            </ul>
-            <p className={`text-xs mt-2 ${wa?.activated ? "text-accent" : "text-faint"}`}>
-              {wa?.activated
-                ? "All set — reminders can be enabled above. They go to the linked phone by default."
-                : "Link a phone, then turn on the reminder toggle. Extra recipient numbers below are optional."}
-            </p>
-          </div>
-
-          <div className="rounded-lg bg-panel-2 border border-line p-3 flex items-center justify-between">
-            <div>
-              <p className="u-label">Connection</p>
-              <p className="text-sm text-ink capitalize">{waStatus}{wa?.phone ? ` · ${wa.phone}` : ""}</p>
-            </div>
-            {waStatus === "connected" ? (
-              <button className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm hover:border-card-red" onClick={() => whatsappAction("/api/whatsapp/disconnect")} disabled={busy}>
-                Disconnect
-              </button>
-            ) : (
-              <button className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm hover:border-accent" onClick={() => whatsappAction("/api/whatsapp/connect")} disabled={busy}>
-                Connect
-              </button>
-            )}
-          </div>
-          {waStatus === "qr" && wa?.qr && (
+          {/* QR for the current user. */}
+          {youStatus === "qr" && wa?.you.qr && (
             <div className="grid place-items-center rounded-lg bg-panel-2 border border-line p-3">
-              <img src={wa.qr} alt="WhatsApp QR code" className="h-40 w-40 rounded bg-white p-2" />
+              <img src={wa.you.qr} alt="WhatsApp QR code" className="h-40 w-40 rounded bg-white p-2" />
               <p className="text-faint text-xs mt-2 text-center">WhatsApp → Linked devices → Link a device, then scan.</p>
             </div>
           )}
-          <div>
-            <label className="u-label block mb-1">Extra recipient numbers (optional)</label>
-            <div className="space-y-2">
-              {recips.map((r, i) => (
-                <div key={i} className="flex gap-2">
-                  <select
-                    className="field !w-44 shrink-0"
-                    value={r.dial}
-                    onChange={(e) => setRecip(i, { dial: e.target.value })}
-                    aria-label="Country code"
-                  >
-                    {COUNTRIES.map((c) => (
-                      <option key={c.name} value={c.dial}>
-                        {c.flag} {c.name} {c.dial}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    className="field flex-1"
-                    inputMode="tel"
-                    value={r.national}
-                    onChange={(e) => setRecip(i, { national: e.target.value })}
-                    placeholder="612 34 56 78"
-                    aria-label="Phone number"
-                  />
-                  {recips.length > 1 && (
-                    <button
-                      className="rounded-md bg-panel-3 border border-line px-2 text-sm text-muted hover:border-card-red"
-                      onClick={() => setRecips(recips.filter((_, idx) => idx !== i))}
-                      aria-label="Remove number"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
+
+          {/* Link / connection controls for the current user. */}
+          <div className="rounded-lg bg-panel-2 border border-line p-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="u-label">Your connection</p>
+              <p className="text-sm text-ink capitalize">{youStatus}{wa?.you.phone ? ` · ${wa.you.phone}` : ""}</p>
             </div>
-            <div className="flex items-center gap-2 mt-2">
-              {recips.length < 4 && (
-                <button
-                  className="text-sm text-muted hover:text-ink transition"
-                  onClick={() => setRecips([...recips, { dial: recips[recips.length - 1]?.dial ?? "+32", national: "" }])}
-                >
-                  + Add another
-                </button>
-              )}
-              <button className="ml-auto btn-yellow !py-1.5 !px-4 !text-sm" onClick={saveAndLink} disabled={busy}>
-                Save & link WhatsApp
+            {youStatus === "connected" ? (
+              <button className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm hover:border-card-red" onClick={() => whatsappAction("/api/whatsapp/disconnect")} disabled={busy}>
+                Unlink
               </button>
-            </div>
-            <p className="text-faint text-xs mt-1">Reminders go to the linked phone by default. Add numbers here only to also notify others (pick the country +prefix, then the rest).</p>
+            ) : (
+              <button className="btn-yellow !py-1.5 !px-4 !text-sm" onClick={linkMyWhatsApp} disabled={busy}>
+                Link my WhatsApp
+              </button>
+            )}
           </div>
+
+          {/* Read-only partner status so it's clear when reminders are ready. */}
+          {wa?.partner && (
+            <div className="rounded-lg bg-panel-2 border border-line p-3">
+              <p className="text-sm text-ink">
+                {wa.partner.linked ? "✅" : "⬜"} {wa.partner.name}’s WhatsApp:{" "}
+                <span className={wa.partner.linked ? "text-accent" : "text-muted"}>
+                  {wa.partner.linked ? "linked" : "not linked yet"}
+                </span>
+              </p>
+              <p className={`text-xs mt-1 ${wa.activated ? "text-accent" : "text-faint"}`}>
+                {wa.activated ? "Reminders are ready — you two remind each other." : "Reminders start once you’re both linked."}
+              </p>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <button className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm hover:border-accent" onClick={sendTest} disabled={busy}>
               Send test message

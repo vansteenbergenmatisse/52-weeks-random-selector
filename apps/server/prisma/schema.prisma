@@ -27,6 +27,7 @@ model User {
   entries         Entry[]
   invitesCreated  Invitation[] @relation("InviteCreator")
   resultRevisions ResultRevision[]
+  whatsappSession WhatsAppSession?
 }
 
 model Session {
@@ -50,7 +51,7 @@ model Couple {
   memberships    Membership[]
   invitations    Invitation[]
   collections    Collection[]
-  whatsappSession WhatsAppSession?
+  whatsappSessions WhatsAppSession[]
   whatsappConfig  WhatsAppConfig?
   calendarConfig  CalendarConfig?
   outboundMessages OutboundMessage[]
@@ -229,16 +230,22 @@ model ResultRevision {
 
 // ── WhatsApp ────────────────────────────────────────────────────────
 
+// Per-user WhatsApp link. Each partner links their OWN phone separately, so the
+// unique key is the user (not the couple). coupleId is kept for scoping/queries.
 model WhatsAppSession {
   id        String   @id @default(cuid())
-  coupleId  String   @unique
+  coupleId  String
+  userId    String   @unique
   status    String   @default("disconnected") // disconnected | qr | connecting | connected
-  phone     String?
+  phone     String?  // the linked device's OWN number (from the pairing)
   lastQr    String?  // last QR payload (data URL) for the settings UI
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 
   couple Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([coupleId])
 }
 
 model WhatsAppConfig {
@@ -271,9 +278,10 @@ model OutboundMessage {
   collectionId   String?
   weeklyResultId String?
   revisionNumber Int?
-  kind           String    // result | reminder | reroll | test
+  kind           String    // result | reminder | reroll | test | calendar_prompt
   status         String    @default("pending") // pending | sent | uncertain | failed
-  chatId         String?   // resolved target chat (individual or group)
+  chatId         String?   // resolved target chat (the recipient partner's number)
+  senderUserId   String?   // whose linked WhatsApp this goes out FROM (cross-send); null = any
   body           String
   waMessageId    String?   // provider message id, links reactions back to results
   attempts       Int       @default(0)

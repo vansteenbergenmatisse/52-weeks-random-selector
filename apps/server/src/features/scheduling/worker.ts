@@ -7,7 +7,7 @@ import { cycleIsComplete } from "../../shared/time.js";
 import * as selection from "../selection/service.js";
 import * as whatsapp from "../whatsapp/manager.js";
 import * as calendar from "../calendar/service.js";
-import { enqueue } from "../whatsapp/outbox.js";
+import { enqueueBroadcast } from "../whatsapp/outbox.js";
 import { formatResultMessage, formatReminder } from "../whatsapp/format.js";
 
 /** Claim a job key; returns false if it was already claimed (idempotent). */
@@ -112,7 +112,7 @@ export async function tick(now: Date = new Date()): Promise<void> {
         const state = await selection.getCurrentState(collection.coupleId, collection.id);
         try {
           if (state.result) {
-            await enqueue({
+            await enqueueBroadcast({
               coupleId: collection.coupleId,
               kind: "result",
               collectionId: collection.id,
@@ -121,7 +121,7 @@ export async function tick(now: Date = new Date()): Promise<void> {
               body: formatResultMessage(state, collection),
             });
           } else {
-            await enqueue({
+            await enqueueBroadcast({
               coupleId: collection.coupleId,
               kind: "reminder",
               collectionId: collection.id,
@@ -169,8 +169,8 @@ export async function startScheduling(): Promise<void> {
   if (env.WHATSAPP_ENABLED) {
     const sessions = await prisma.whatsAppSession.findMany({ where: { status: "connected" } });
     for (const s of sessions) {
-      whatsapp.connect(s.coupleId).catch((err) =>
-        logger.warn({ err: String(err), coupleId: s.coupleId }, "WhatsApp reconnect failed"),
+      whatsapp.connect(s.coupleId, s.userId).catch((err) =>
+        logger.warn({ err: String(err), userId: s.userId }, "WhatsApp reconnect failed"),
       );
     }
   }

@@ -2,50 +2,57 @@ import { prisma } from "../../platform/db/prisma.js";
 import { logger } from "../../platform/logger/logger.js";
 import type { WhatsAppAdapter } from "./adapter.js";
 
-export interface EnqueueInput {
+export type MessageKind = "result" | "reminder" | "reroll" | "test" | "calendar_prompt";
+
+export interface Member {
+  userId: string;
+  displayName: string;
+  phone: string | null; // the member's own linked WhatsApp number
+  connected: boolean; // their session is live right now
+}
+
+/** The couple's members with their linked-WhatsApp number + live connection state. */
+export async function coupleMembers(coupleId: string): Promise<Member[]> {
+  const memberships = await prisma.membership.findMany({
+    where: { coupleId },
+    include: { user: { include: { whatsappSession: true } } },
+    orderBy: { joinedAt: "asc" },
+  });
+  return memberships.map((m) => ({
+    userId: m.userId,
+    displayName: m.user.displayName,
+    phone: m.user.whatsappSession?.phone ?? null,
+    connected: m.user.whatsappSession?.status === "connected",
+  }));
+}
+
+function toChatId(phone: string): string {
+  return phone.includes("@") ? phone : `${phone.replace(/\D/g, "")}@c.us`;
+}
+
+export interface BroadcastInput {
   coupleId: string;
-  kind: "result" | "reminder" | "reroll" | "test" | "calendar_prompt";
+  kind: MessageKind;
   body: string;
   collectionId?: string | null;
   weeklyResultId?: string | null;
   revisionNumber?: number | null;
 }
 
-/** Resolve the target chat ids from a couple's WhatsApp config. */
-export async function resolveTargets(coupleId: string): Promise<string[]> {
-  const cfg = await prisma.whatsAppConfig.findUnique({ where: { coupleId } });
-  if (cfg?.deliveryMode === "group") return cfg.groupId ? [cfg.groupId] : [];
-  let recipients = cfg ? safeJsonArray(cfg.recipients) : [];
-  if (recipients.length === 0) {
-    // No recipient was typed in — default to the linked phone's OWN number, which
-    // Baileys captures on connect (session.phone). This lets a couple link their
-    // phone and immediately get reminders on that device without ever entering a
-    // number. An explicit recipient (or group) always takes precedence when set.
-    const session = await prisma.whatsAppSession.findUnique({ where: { coupleId } });
-    if (session?.phone) recipients = [session.phone];
-  }
-  // Normalise bare phone numbers to WhatsApp chat ids.
-  return recipients.map((r) => (r.includes("@") ? r : `${r.replace(/\D/g, "")}@c.us`));
-}
-
-function safeJsonArray(s: string): string[] {
-  try {
-    const v = JSON.parse(s);
-    return Array.isArray(v) ? v.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Create one pending outbox row per resolved target chat. */
-export async function enqueue(input: EnqueueInput): Promise<string[]> {
-  const targets = await resolveTargets(input.coupleId);
-  if (targets.length === 0) {
-    logger.info({ coupleId: input.coupleId, kind: input.kind }, "No WhatsApp targets configured; skipping enqueue");
-    return [];
-  }
+/**
+ * Broadcast a couple message to BOTH partners, cross-sent: each partner receives
+ * it FROM the other's linked WhatsApp (so Teresa's pick looks like Matisse texted
+ * her, and vice-versa). A direction is created only when the recipient has a
+ * linked number AND the sender (the other partner) is currently connected — i.e.
+ * both must be linked for anything to go out. Returns the created row ids.
+ */
+export async function enqueueBroadcast(input: BroadcastInput): Promise<string[]> {
+  const members = await coupleMembers(input.coupleId);
+  if (members.length !== 2) return [];
   const ids: string[] = [];
-  for (const chatId of targets) {
+  for (const recipient of members) {
+    const sender = members.find((m) => m.userId !== recipient.userId)!;
+    if (!recipient.phone || !sender.connected) continue;
     const row = await prisma.outboundMessage.create({
       data: {
         coupleId: input.coupleId,
@@ -54,53 +61,62 @@ export async function enqueue(input: EnqueueInput): Promise<string[]> {
         revisionNumber: input.revisionNumber ?? null,
         kind: input.kind,
         body: input.body,
-        chatId,
+        chatId: toChatId(recipient.phone),
+        senderUserId: sender.userId,
         status: "pending",
       },
     });
     ids.push(row.id);
   }
+  if (ids.length === 0) {
+    logger.info(
+      { coupleId: input.coupleId, kind: input.kind },
+      "No linked WhatsApp pair (both partners must be connected); skipping broadcast",
+    );
+  }
   return ids;
+}
+
+export interface DirectInput {
+  coupleId: string;
+  senderUserId: string;
+  chatId: string;
+  kind: MessageKind;
+  body: string;
+}
+
+/** Enqueue a single message that must go out FROM a specific user's session. */
+export async function enqueueDirect(input: DirectInput): Promise<string> {
+  const row = await prisma.outboundMessage.create({
+    data: {
+      coupleId: input.coupleId,
+      kind: input.kind,
+      body: input.body,
+      chatId: toChatId(input.chatId),
+      senderUserId: input.senderUserId,
+      status: "pending",
+    },
+  });
+  return row.id;
 }
 
 const MAX_ATTEMPTS = 5;
 const RETRY_GRACE_MS = 2 * 60_000;
 
 /**
- * Reconcile rows that flushOutbox left in a non-terminal state, then flush.
- * Without this, a row that goes "failed" (adapter returned ok:false — never
- * sent) or "uncertain" (send threw / process crashed mid-send) is a permanent
- * dead end and the message is silently lost.
- *
- * - "failed" definitely didn't go out, so it's safe to resend.
- * - "uncertain" MIGHT have gone out; Baileys can't cheaply confirm delivery, so
- *   we retry it too but only after a grace period and under a low attempt cap —
- *   a rare duplicate reminder is far better than silently dropping the week's
- *   pick. Attempts are bounded so a permanently-bad row eventually gives up.
+ * Send all pending rows that must go out on THIS user's session. Rows stamped
+ * with a null senderUserId (nothing pinned them to a sender) also flush here so
+ * they aren't stranded. Uncertain sends are marked for later reconciliation
+ * rather than blindly retried, so a partner never gets the same message twice.
  */
-export async function reconcileOutbox(adapter: WhatsAppAdapter): Promise<void> {
-  const cutoff = new Date(Date.now() - RETRY_GRACE_MS);
-  await prisma.outboundMessage.updateMany({
+export async function flushOutboxForUser(userId: string, adapter: WhatsAppAdapter): Promise<void> {
+  const pending = await prisma.outboundMessage.findMany({
     where: {
       coupleId: adapter.coupleId,
-      status: { in: ["failed", "uncertain"] },
-      attempts: { lt: MAX_ATTEMPTS },
+      status: "pending",
       chatId: { not: null },
-      OR: [{ sentAt: null }, { sentAt: { lt: cutoff } }],
+      OR: [{ senderUserId: userId }, { senderUserId: null }],
     },
-    data: { status: "pending" },
-  });
-  await flushOutbox(adapter);
-}
-
-/**
- * Send all pending outbox rows for a couple via its adapter. Uncertain sends
- * are marked "uncertain" for later reconciliation (see reconcileOutbox) rather
- * than blindly retried inline, so a partner never gets the same message twice.
- */
-export async function flushOutbox(adapter: WhatsAppAdapter): Promise<void> {
-  const pending = await prisma.outboundMessage.findMany({
-    where: { coupleId: adapter.coupleId, status: "pending", chatId: { not: null } },
     orderBy: { createdAt: "asc" },
     take: 20,
   });
@@ -131,7 +147,6 @@ export async function flushOutbox(adapter: WhatsAppAdapter): Promise<void> {
         });
       }
     } catch (err) {
-      // Left as "uncertain": the message may or may not have gone out.
       await prisma.outboundMessage.update({
         where: { id: msg.id },
         data: { status: "uncertain", lastError: String(err) },
@@ -139,4 +154,26 @@ export async function flushOutbox(adapter: WhatsAppAdapter): Promise<void> {
       logger.warn({ err: String(err), msgId: msg.id }, "WhatsApp send errored (marked uncertain)");
     }
   }
+}
+
+/**
+ * Reconcile stranded rows for this sender (failed/uncertain), then flush.
+ * - "failed" definitely didn't go out, so it's safe to resend.
+ * - "uncertain" MIGHT have gone out; retried after a grace period under a low
+ *   attempt cap — a rare duplicate beats silently dropping the week's pick.
+ */
+export async function reconcileOutboxForUser(userId: string, adapter: WhatsAppAdapter): Promise<void> {
+  const cutoff = new Date(Date.now() - RETRY_GRACE_MS);
+  await prisma.outboundMessage.updateMany({
+    where: {
+      coupleId: adapter.coupleId,
+      status: { in: ["failed", "uncertain"] },
+      attempts: { lt: MAX_ATTEMPTS },
+      chatId: { not: null },
+      OR: [{ senderUserId: userId }, { senderUserId: null }],
+      AND: [{ OR: [{ sentAt: null }, { sentAt: { lt: cutoff } }] }],
+    },
+    data: { status: "pending" },
+  });
+  await flushOutboxForUser(userId, adapter);
 }
