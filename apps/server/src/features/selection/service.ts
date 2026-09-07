@@ -400,6 +400,43 @@ export async function getHistory(coupleId: string, collectionId: string) {
 }
 
 /** Begin a fresh 52-week cycle without deleting history or recycling entries. */
+/**
+ * Testing reset: wipe a collection back to TRUE zero — every idea (incl. the
+ * current pick and soft-deleted rows), every week's result, and all history —
+ * then restart its cycle from a fresh scheduled slot. Deleting the periods
+ * cascades to results + revisions; entries are hard-deleted (ResultRevision.entryId
+ * is SetNull, so no history rows block it). After this the pool is empty, no pick
+ * shows, and the counts read zero.
+ */
+export async function resetToZero(coupleId: string, collectionId: string) {
+  const collection = await assertCollectionInCouple(collectionId, coupleId);
+  const { firstScheduledInstant } = await import("../../shared/time.js");
+  const nextStart = firstScheduledInstant({
+    weekday: collection.scheduleWeekday,
+    time: collection.scheduleTime,
+    timezone: collection.scheduleTimezone,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    // Periods cascade → WeeklyResult → ResultRevision (clears the pick + history).
+    await tx.weeklyPeriod.deleteMany({ where: { collectionId } });
+    // Outbound WhatsApp rows for this collection (tidy; FK would only SetNull).
+    await tx.outboundMessage.deleteMany({ where: { collectionId } });
+    // Every idea, including selected/completed and previously soft-deleted ones.
+    await tx.entry.deleteMany({ where: { collectionId } });
+    // Restart the cycle from a fresh slot so week 1 begins clean.
+    await tx.collection.update({
+      where: { id: collectionId },
+      data: { cycleIndex: 0, cycleStartDate: nextStart },
+    });
+  });
+
+  publish({ type: "collection.changed", coupleId, collectionId });
+  publish({ type: "entries.changed", coupleId, collectionId });
+  publish({ type: "result.changed", coupleId, collectionId });
+  return getCurrentState(coupleId, collectionId);
+}
+
 export async function startNewCycle(coupleId: string, collectionId: string) {
   const collection = await assertCollectionInCouple(collectionId, coupleId);
   const { firstScheduledInstant } = await import("../../shared/time.js");

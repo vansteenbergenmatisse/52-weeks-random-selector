@@ -83,6 +83,18 @@ export function SettingsDialog({
     }
   }
 
+  async function resetToZero() {
+    if (!confirm(`Reset ${collection.name} to zero? This deletes ALL ${collection.name.toLowerCase()}, the current pick, and history. Can't be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/collections/${collection.id}/reset`);
+      qc.invalidateQueries();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function whatsappAction(path: string) {
     setBusy(true);
     setWaNote(null);
@@ -323,9 +335,14 @@ export function SettingsDialog({
         </div>
 
         <div className="flex items-center justify-between border-t border-line pt-4">
-          <button className="text-sm text-muted hover:text-card-red transition" onClick={newCycle} disabled={busy}>
-            Start new 52-week cycle
-          </button>
+          <div className="flex flex-col items-start gap-1">
+            <button className="text-sm text-muted hover:text-card-red transition" onClick={newCycle} disabled={busy}>
+              Start new 52-week cycle
+            </button>
+            <button className="text-sm text-card-red/80 hover:text-card-red transition" onClick={resetToZero} disabled={busy}>
+              🧨 Reset {collection.name} to zero (testing)
+            </button>
+          </div>
           <div className="flex gap-2">
             <button className="rounded-md px-4 py-2 text-sm text-muted hover:text-ink" onClick={onClose}>
               Cancel

@@ -147,4 +147,37 @@ describe("selection", () => {
     const { couple, dates } = await makeCouple();
     await expect(selection.spin(couple.id, dates.id, {})).rejects.toThrow();
   });
+
+  it("skip returns the skipped pick to the pool and lands on a different one", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
+    const firstPick = spun.state.result!.title;
+
+    const res = await selection.skip(couple.id, dates.id, { userId: a.id });
+    expect(res.skipped).toBe(true);
+    expect(res.state.result!.title).not.toBe(firstPick); // landed on the other one
+
+    // The skipped idea is back in the pool (status available), not gone.
+    const skippedBack = await prisma.entry.findFirst({ where: { collectionId: dates.id, title: firstPick } });
+    expect(skippedBack?.status).toBe("available");
+  });
+
+  it("resetToZero wipes ideas, the current pick, history, and the counts — only that collection", async () => {
+    const { couple, a, dates, movies } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
+    await addEntries(movies.id, a.id, ["Film A", "Film B"]); // a sibling collection to prove isolation
+    await selection.spin(couple.id, dates.id, { userId: a.id }); // pick + period + result
+    await selection.markCompleted(couple.id, dates.id); // completed entry + result history
+
+    const state = await selection.resetToZero(couple.id, dates.id);
+    expect(state.result).toBeNull();
+    expect(state.availableCount).toBe(0);
+    expect(await prisma.entry.count({ where: { collectionId: dates.id } })).toBe(0); // hard-wiped
+    expect(await prisma.weeklyResult.count({ where: { collectionId: dates.id } })).toBe(0); // no picks, history gone
+    expect(state.cycleIndex).toBe(0); // cycle restarted from zero
+
+    // The other collection is untouched.
+    expect(await prisma.entry.count({ where: { collectionId: movies.id } })).toBe(2);
+  });
 });

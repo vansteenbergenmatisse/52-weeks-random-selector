@@ -7,6 +7,22 @@
 
 ## 0. ACTIVE TODO (2026-09-07) — honest status
 
+### This session's changes (2026-09-07, latest+1) — pool reset, no example seeds
+
+Bug reports + a testing request. Root causes found (see `selection/service.ts`, `entries/service.ts`):
+per-person counts count `status:"available"` only, while the grid also shows **completed "✓ Watched"
+cards** and a spun pick becomes `selected` (shown on the roulette page) — so visible items exceed the
+count. Spin already refuses an empty pool (no ghost). The "random ideas" were the **example seed**.
+
+1. ✅ **[Reset] Per-collection "Reset to zero" (testing).** `resetToZero(coupleId, collectionId)` +
+   `POST /api/collections/:id/reset` + a 🧨 button in that collection's Settings. Wipes ALL ideas
+   (incl. the current pick, completed, and soft-deleted), every weekly result, and history, then
+   restarts the cycle from a fresh slot. Pool → truly 0, no pick shows.
+2. ✅ **[Seed] No example ideas by default.** The 12 demo dates / 12 demo movies now only seed when
+   `SEED_EXAMPLES=true`; a fresh space starts **empty** (no "random shit added").
+3. ✅ **[Skip] Confirmed correct** — `skip()` returns the skipped idea to the pool (`available`) and
+   draws a different one; locked in with a regression test. No fix needed.
+
 ### This session's changes (2026-09-07, latest) — WhatsApp per-user linking + mutual reminders
 
 Reworked WhatsApp from ONE shared couple connection to **per-person linking**. Matisse and Teresa
@@ -15,7 +31,7 @@ recipient number field** — the number comes from each person's link. **Reminde
 cross-sent**: Teresa's weekly pick is sent FROM Matisse's WhatsApp and vice-versa, so both must be
 linked. Settings shows "Your WhatsApp (just you)" + the partner's link status. Collection settings
 and calendar stay global/shared. Spec: `docs/superpowers/specs/2026-09-07-whatsapp-per-user-linking-design.md`.
-All ✅ in code (83 tests); still needs `WHATSAPP_ENABLED=true` + each partner scanning their QR.
+All ✅ in code; still needs `WHATSAPP_ENABLED=true` + each partner scanning their QR.
 
 ### Earlier this session (2026-09-07, later) — WhatsApp self-config + keyless calendar
 
@@ -74,7 +90,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: LIVE on Railway, running, tested.** 83 server tests pass; web build + server
+**Status: LIVE on Railway, running, tested.** 85 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
 **Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
@@ -381,7 +397,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 83 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 85 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```

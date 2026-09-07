@@ -106,4 +106,11 @@ export async function resultRoutes(app: FastifyInstance) {
     const { collectionId } = req.params as { collectionId: string };
     return reply.send({ collection: await selection.startNewCycle(coupleId, collectionId) });
   });
+
+  // Testing reset: wipe this collection back to zero (ideas, pick, and history).
+  app.post("/api/collections/:collectionId/reset", async (req, reply) => {
+    const { coupleId } = await requireCouple(req);
+    const { collectionId } = req.params as { collectionId: string };
+    return reply.send({ state: await selection.resetToZero(coupleId, collectionId) });
+  });
 }

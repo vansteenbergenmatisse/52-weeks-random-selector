@@ -127,9 +127,13 @@ async function main() {
     });
   }
 
-  // Seed entries only if the collection is empty (keeps seed idempotent).
+  // Example ideas are OFF by default — the couple starts empty and adds their own.
+  // Set SEED_EXAMPLES=true to populate the demo date/movie ideas instead.
+  const seedExamples = process.env.SEED_EXAMPLES === "true";
+
+  // Seed entries only if enabled AND the collection is empty (keeps seed idempotent).
   const datesCount = await prisma.entry.count({ where: { collectionId: dates.id } });
-  if (datesCount === 0) {
+  if (seedExamples && datesCount === 0) {
     for (let i = 0; i < DATE_IDEAS.length; i++) {
       const idea = DATE_IDEAS[i]!;
       await prisma.entry.create({
@@ -145,7 +149,7 @@ async function main() {
   }
 
   const moviesCount = await prisma.entry.count({ where: { collectionId: movies.id } });
-  if (moviesCount === 0) {
+  if (seedExamples && moviesCount === 0) {
     for (let i = 0; i < MOVIE_IDEAS.length; i++) {
       const idea = MOVIE_IDEAS[i]!;
       await prisma.entry.create({
