@@ -10,7 +10,7 @@ import {
   requireUser,
   setSessionCookie,
 } from "../http.js";
-import { demoEnabled, isProd } from "../../platform/config/env.js";
+import { demoEnabled, isProd, spaceLocked } from "../../platform/config/env.js";
 
 // Strict limits protect production; generous in dev/test so suites don't trip.
 const REG_LIMIT = { max: isProd ? 10 : 1000, timeWindow: "10 minutes" };
@@ -49,6 +49,19 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ user });
   });
 
+  // One-tap space picker: enter as Teresa/Matisse, gated by the shared passcode
+  // (when configured). No password leaves the client. Rate-limited like login so
+  // the passcode can't be brute-forced.
+  app.post("/api/auth/space-login", { config: { rateLimit: LOGIN_LIMIT } }, async (req, reply) => {
+    const body = parse(
+      z.object({ username: z.string().min(1).max(40), passcode: z.string().max(200).default("") }),
+      req.body,
+    );
+    const { user, token } = await auth.spaceLogin(body);
+    setSessionCookie(reply, token);
+    return reply.send({ user });
+  });
+
   app.post("/api/auth/logout", async (req, reply) => {
     const token = req.cookies?.[SESSION_COOKIE];
     if (token) await auth.logout(token);
@@ -58,10 +71,10 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get("/api/auth/me", async (req, reply) => {
     const user = await currentUser(req);
-    if (!user) return reply.send({ user: null, couple: null, demoMode: demoEnabled });
+    if (!user) return reply.send({ user: null, couple: null, demoMode: demoEnabled, spaceLocked });
     const couple = await auth.getCoupleForUser(user.id);
     const members = couple ? await auth.getMembers(couple.coupleId) : [];
-    return reply.send({ user, couple, members, demoMode: demoEnabled });
+    return reply.send({ user, couple, members, demoMode: demoEnabled, spaceLocked });
   });
 
   app.patch("/api/auth/profile", async (req, reply) => {

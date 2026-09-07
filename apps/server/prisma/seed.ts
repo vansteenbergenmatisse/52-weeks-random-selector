@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { DateTime } from "luxon";
@@ -5,6 +6,12 @@ import { DateTime } from "luxon";
 const prisma = new PrismaClient();
 
 const TZ = process.env.DEFAULT_TIMEZONE ?? "America/New_York";
+
+// Demo (Teresa/Matisse) accounts sign in via the passcode-gated space picker,
+// not a password — so their seeded password is never sent by the client and
+// never logged. Use DEMO_PASSWORD if provided, else a strong random one that
+// is only set the first time each account is created (the seed is idempotent).
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD || randomBytes(24).toString("base64url");
 
 function firstSunday8pm(): Date {
   let dt = DateTime.now().setZone(TZ).set({ hour: 20, minute: 0, second: 0, millisecond: 0 });
@@ -53,7 +60,7 @@ async function ensureUser(username: string, displayName: string, avatarUrl: stri
       displayName,
       avatarUrl,
       isDemo: true,
-      passwordHash: await bcrypt.hash("12345", 12),
+      passwordHash: await bcrypt.hash(DEMO_PASSWORD, 12),
     },
   });
 }
@@ -153,8 +160,8 @@ async function main() {
     }
   }
 
-  console.log(`Done. Demo couple "${coupleId}" ready.`);
-  console.log("Login with teresa / 12345 or matisse / 12345 (demo mode only).");
+  console.log(`Done. Shared space "${coupleId}" ready.`);
+  console.log("Enter via the one-tap Teresa/Matisse picker (gated by SPACE_PASSCODE when set).");
 }
 
 main()

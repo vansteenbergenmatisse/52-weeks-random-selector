@@ -1,9 +1,18 @@
+import { timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../platform/db/prisma.js";
 import { generateToken, hashPassword, hashToken, verifyPassword } from "../../platform/security/crypto.js";
 import { Errors } from "../../shared/errors.js";
 import { demoEnabled, env } from "../../platform/config/env.js";
 import { createDefaultCollections } from "../collections/service.js";
+
+/** Length-safe, constant-time string comparison (for the space passcode). */
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 const SESSION_TTL_DAYS = 30;
 const INVITE_TTL_HOURS = 72;
@@ -44,13 +53,23 @@ export async function registerUser(input: {
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) throw Errors.conflict("That username is taken");
 
-  const user = await prisma.user.create({
-    data: {
-      username,
-      displayName: input.displayName?.trim() || input.username.trim(),
-      passwordHash: await hashPassword(input.password),
-    },
-  });
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        username,
+        displayName: input.displayName?.trim() || input.username.trim(),
+        passwordHash: await hashPassword(input.password),
+      },
+    });
+  } catch (e) {
+    // Two registrations for the same username can both pass the pre-check and
+    // race to create(); the unique constraint turns that into a 409, not a 500.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      throw Errors.conflict("That username is taken");
+    }
+    throw e;
+  }
   const token = await createSession(user.id);
   return { user: toPublicUser(user), token };
 }
@@ -65,10 +84,34 @@ export async function login(input: {
   const ok = user ? await verifyPassword(input.password, user.passwordHash) : false;
   if (!user || !ok) throw Errors.unauthorized("Invalid username or password");
 
-  // The one-tap Teresa/Matisse accounts are only usable when demo mode is on.
-  if (user.isDemo && !demoEnabled) {
-    throw Errors.forbidden("Demo accounts are disabled");
+  // The one-tap Teresa/Matisse accounts never sign in with a password — they
+  // enter through the passcode-gated space picker (spaceLogin). Rejecting them
+  // here closes the shared/weak-password path entirely, regardless of what the
+  // seeded password is.
+  if (user.isDemo) {
+    throw Errors.forbidden("Use the one-tap space picker to enter");
   }
+  const token = await createSession(user.id);
+  return { user: toPublicUser(user), token };
+}
+
+/**
+ * Enter the shared couple space as a seeded (demo) member — Teresa or Matisse.
+ * This is the ONLY way those one-tap accounts sign in: it's gated by demo mode
+ * and, on a public deploy, by a shared SPACE_PASSCODE, so the client never holds
+ * a reusable password and a stranger with the URL can't tap straight in.
+ */
+export async function spaceLogin(input: {
+  username: string;
+  passcode: string;
+}): Promise<{ user: PublicUser; token: string }> {
+  if (!demoEnabled) throw Errors.forbidden("The shared-space picker is turned off");
+  if (env.SPACE_PASSCODE && !safeEqual(input.passcode, env.SPACE_PASSCODE)) {
+    throw Errors.unauthorized("That space passcode isn't right");
+  }
+  const username = input.username.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { username } });
+  if (!user || !user.isDemo) throw Errors.unauthorized("Unknown space member");
   const token = await createSession(user.id);
   return { user: toPublicUser(user), token };
 }
@@ -83,6 +126,9 @@ export async function getUserByToken(token: string): Promise<PublicUser | null> 
     include: { user: true },
   });
   if (!session || session.expiresAt.getTime() < Date.now()) return null;
+  // A demo session must stop working the instant demo mode is turned off — not up
+  // to 30 days later when the session naturally expires. Re-check on every request.
+  if (session.user.isDemo && !demoEnabled) return null;
   return toPublicUser(session.user);
 }
 
@@ -156,6 +202,16 @@ export async function acceptInvitation(
           where: { coupleId_userId: { coupleId: inv.coupleId, userId } },
         });
         if (already) return { coupleId: inv.coupleId };
+
+        // A user belongs to exactly one couple space here. If they're already in a
+        // DIFFERENT couple, refuse — otherwise they'd burn this couple's only free
+        // slot (the intended partner could never join) while the new membership
+        // stays invisible to them (getCoupleForUser returns their first couple).
+        // The throw rolls back the whole transaction, releasing the token claim.
+        const other = await tx.membership.findFirst({
+          where: { userId, coupleId: { not: inv.coupleId } },
+        });
+        if (other) throw Errors.conflict("You're already part of a couple space");
 
         const members = await tx.membership.count({ where: { coupleId: inv.coupleId } });
         if (members >= MAX_MEMBERS) throw Errors.conflict("This space already has two people");

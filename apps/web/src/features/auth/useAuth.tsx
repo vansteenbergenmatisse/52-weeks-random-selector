@@ -8,6 +8,7 @@ interface MeResponse {
   couple: { coupleId: string; name: string } | null;
   members?: User[];
   demoMode?: boolean;
+  spaceLocked?: boolean;
 }
 
 interface AuthValue {
@@ -15,6 +16,7 @@ interface AuthValue {
   couple: { coupleId: string; name: string } | null;
   members: User[];
   demoMode: boolean;
+  spaceLocked: boolean;
   loading: boolean;
   refresh: () => void;
   logout: () => Promise<void>;
@@ -35,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     couple: data?.couple ?? null,
     members: data?.members ?? [],
     demoMode: data?.demoMode ?? false,
+    spaceLocked: data?.spaceLocked ?? false,
     loading: isLoading,
     refresh: () => qc.invalidateQueries({ queryKey: ["me"] }),
     logout: async () => {

@@ -45,9 +45,10 @@ export function AuthPage() {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [coupleName, setCoupleName] = useState("");
+  const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { refresh, demoMode } = useAuth();
+  const { refresh, demoMode, spaceLocked } = useAuth();
   const navigate = useNavigate();
 
   // When the shared-space picker is available it leads; the password form is
@@ -75,9 +76,15 @@ export function AuthPage() {
 
   async function pick(u: string) {
     setError(null);
+    if (spaceLocked && !passcode.trim()) {
+      setError("Enter the space passcode first.");
+      return;
+    }
     setBusy(true);
     try {
-      await api.post("/api/auth/login", { username: u, password: "12345" });
+      // No client-side password: the passcode-gated space-login signs the seeded
+      // member in server-side.
+      await api.post("/api/auth/space-login", { username: u, passcode });
       refresh();
       navigate("/app");
     } catch (err) {
@@ -100,6 +107,17 @@ export function AuthPage() {
               <p className="text-muted text-sm mb-5">
                 Tap in — everything you both add stays in the same space, in sync.
               </p>
+              {spaceLocked && (
+                <input
+                  className="field mb-3"
+                  type="password"
+                  placeholder="Space passcode"
+                  value={passcode}
+                  autoComplete="off"
+                  onChange={(e) => setPasscode(e.target.value)}
+                  aria-label="Space passcode"
+                />
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <PersonCard user="teresa" emoji="🌸" name="Teresa" busy={busy} onPick={() => pick("teresa")} />
                 <PersonCard user="matisse" emoji="🎨" name="Matisse" busy={busy} onPick={() => pick("matisse")} />

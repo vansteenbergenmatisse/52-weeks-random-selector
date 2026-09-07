@@ -27,6 +27,14 @@ const bool = (def: boolean) =>
 const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DEMO_MODE: bool(false),
+  // Shared secret that gates the one-tap Teresa/Matisse space picker on a public
+  // URL. Empty = no gate (fine for local dev). Set this in production so a
+  // stranger who finds the URL can't tap straight into the couple's space.
+  SPACE_PASSCODE: z.string().optional().default(""),
+  // Password for the seeded demo accounts. Empty = a strong random one is used
+  // per seed (never logged); the client never needs it — the picker signs in via
+  // the passcode-gated space-login endpoint.
+  DEMO_PASSWORD: z.string().optional().default(""),
   DATABASE_URL: z.string().min(1),
   PORT: z.coerce.number().default(4000),
   APP_BASE_URL: z.string().default("http://localhost:5173"),
@@ -71,6 +79,13 @@ export const isTest = env.NODE_ENV === "test";
  * so we intentionally allow it in production too — gated only by DEMO_MODE.
  */
 export const demoEnabled = env.DEMO_MODE;
+
+/**
+ * True when the one-tap space picker is gated by a passcode — i.e. demo mode is
+ * on AND a SPACE_PASSCODE is configured. The web uses this to decide whether to
+ * ask for the passcode before showing the Teresa/Matisse buttons.
+ */
+export const spaceLocked = demoEnabled && env.SPACE_PASSCODE.length > 0;
 
 export const corsOrigins = env.CORS_ORIGINS.split(",")
   .map((s) => s.trim())
