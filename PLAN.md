@@ -1,7 +1,7 @@
 # Our 52 — Project Context & Handoff (PLAN.md)
 
 > Single-file context so you can clear memory and pick this up cold.
-> Last updated: 2026-09-06.
+> Last updated: 2026-09-07.
 
 ---
 
@@ -16,12 +16,31 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: LIVE on Railway, running, tested.** 65 server tests pass; web build + server
+**Status: LIVE on Railway, running, tested.** 72 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
-**⚠️ Top open task: the WhatsApp live connection does NOT work yet — see §10.**
+**Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
+- **Mandatory bug-review gate CLEARED.** The system-wide review (41 agents, adversarially
+  verified) surfaced **29 confirmed findings (6 high / 13 med / 10 low)** — all fixed.
+  Highlights: auto-select no longer permanently skips a week on an empty pool (claim-before-work
+  removed; unique(periodId) handles concurrency); notify JobRun rolls back on enqueue failure;
+  `notifyInstant` off-by-one fixed; ghost-result guards on `markCompleted` + `deleteMany`;
+  movie one-copy invariant on restore/update; calendar invite atomic claim (no dup emails);
+  RFC-5545 ICS line folding; OSM shared deadline + bounded/TTL geocode cache + 400 on bad
+  category; AI-match token budget; Dockerfile `NODE_ENV=production` (Secure cookie) +
+  `WHATSAPP_SESSION_DIR=/data/whatsapp`; web spin no longer hangs on "Choosing…".
+- **Login security → shared passcode.** One-tap Teresa/Matisse now enter via a passcode-gated
+  `POST /api/auth/space-login` (no client password). `login()` rejects demo accounts; seeded
+  password is env/random and never logged; `SPACE_PASSCODE` gates the picker on the public URL;
+  demo sessions are revoked the instant `DEMO_MODE` flips off. `acceptInvitation` refuses a user
+  already in another couple (no burned slot).
+- **WhatsApp connection HARDENED (§10 items 2–4).** Reconnect with capped backoff+jitter;
+  `reconcileOutbox` re-queues stranded uncertain/failed sends; worker `healConnections()`
+  self-heals drifted sessions each tick; group-mode activation/authorization. Settings shows a
+  LIVE connection banner + a one-tap **"Save & link WhatsApp"** (save details → connect → QR).
+  **Only unverified step: real phone QR pairing** (needs `WHATSAPP_ENABLED=true` + a phone).
 
-**Latest session (2026-09-06, on `main`):**
+**Earlier session (2026-09-06, on `main`):**
 - **Deployed to Railway as ONE service** — the Fastify API now serves the built web app as
   static files with SPA fallback (`@fastify/static` in `server.ts`), so one service + one
   domain + one Volume at `/data` hosts everything. The client uses relative `/api` paths →
@@ -294,7 +313,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 65 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 72 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
@@ -326,18 +345,23 @@ Integrations (all optional; features degrade gracefully):
 - `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR` (Baileys multi-file auth). *(No Chrome path any more — Baileys needs no browser.)*
 
 In production set a real `SESSION_SECRET`. **`DEMO_MODE=true` is intentionally ON in prod**
-(private shared space) so the one-tap Teresa/Matisse login works; the demo gate is decoupled
-from `NODE_ENV` (`demoEnabled = env.DEMO_MODE`).
+(private shared space) so the one-tap Teresa/Matisse picker works; the demo gate is decoupled
+from `NODE_ENV` (`demoEnabled = env.DEMO_MODE`). **Set `SPACE_PASSCODE`** in prod so the picker
+requires a shared secret (a stranger with the URL can't tap straight in); the seeded accounts have
+no client-usable password and sign in only via `POST /api/auth/space-login`. `DEMO_PASSWORD` is
+optional (a strong random one is generated on first seed otherwise, never logged).
 
 ---
 
 ## 9. Known gaps / what's NOT verified
 
-- **⚠️ WhatsApp live connection DOES NOT WORK (top open task — see §10)** — no phone paired;
-  the adapter is fixture. The **Baileys** adapter is coded + module-shape smoke-tested, but
-  real QR pairing/send is unverified, disconnects aren't recovered, and session persistence
-  on the `/data` Volume isn't confirmed. Settings shows a "connection isn't working yet"
-  banner. Unofficial client (can drop; needs an always-on host + reconnect).
+- **WhatsApp live pairing is the ONE unverified path.** The Baileys adapter now has capped
+  backoff+jitter reconnect, outbox reconciliation, and a per-tick `healConnections()` self-heal;
+  the container defaults `WHATSAPP_SESSION_DIR=/data/whatsapp` so creds persist on the Volume;
+  Settings has a live status banner + one-tap "Save & link WhatsApp". **Still unverified:** an
+  actual QR pairing/send with a real phone (needs `WHATSAPP_ENABLED=true` on the server and
+  someone to scan). Unofficial client — can still drop; the reconnect/heal logic is untested
+  against a live socket.
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
   The `.ics` build + 👍/button trigger + idempotency are coded and tested.
@@ -356,33 +380,27 @@ from `NODE_ENV` (`demoEnabled = env.DEMO_MODE`).
 
 ## 10. Suggested next steps
 
-> Deploy is done (§1 — one Railway service, live). The priority now is **WhatsApp**.
+> Deploy is done (§1). The bug-review gate is CLEARED and the WhatsApp connection is hardened
+> in code. The one remaining WhatsApp step needs a real phone.
 
-### ⚠️ NEXT TASK TO FIX — WhatsApp connection (does NOT work today)
-The live WhatsApp connection isn't working (fixture adapter; real Baileys pairing/sending
-never verified — no phone paired). Settings shows a "⚠️ WhatsApp connection isn't working
-yet" banner. To make it real:
+### ✅ MANDATORY bug review — DONE
+The system-wide bug hunt ran (41 agents, adversarially verified) → **29 confirmed findings
+(6 high / 13 med / 10 low), all fixed** this session with 7 new regression tests. See the
+"Latest session" note in §1 for the highlight list.
 
-1. **Get a real WhatsApp connection working** — set `WHATSAPP_ENABLED=true`, verify Baileys
-   QR pairing + live send/receive with a real phone, and persist the session in
-   `WHATSAPP_SESSION_DIR` **on the `/data` Volume** so it survives redeploys.
-2. **Fix automatic disconnects** — Baileys drops on its own; add robust reconnect
-   (exponential backoff, session re-use) so the link stays up on an always-on host.
-3. **Reconnect prompt/pop-up** — when WhatsApp is disconnected, surface a pop-up to reconnect
-   (scan QR). If it disconnects again, prompt to re-link; a message can only be sent once
-   connected. **Scope (confirmed): connection is required only for the weekly WhatsApp
-   reminders**, NOT the whole app — spinning, the pool, and calendar keep working without it
-   (graceful degradation stays). The reminder toggle stays gated behind an active connection.
-4. **Activation form** — user enters their **name + phone + email**, and can **pre-fill the
-   partner's email and phone** for them. **Once filled in (confirmed): save the details, then
-   immediately start the WhatsApp connection and show the QR to scan**; reminders unlock once
-   linked.
-
-### ✅ MANDATORY before launch/use — full system bug review
-Run a **10-agent system-wide bug hunt** (deploy 10 area-focused agents to find issues/bugs
-across the whole system, then adversarially verify each finding) and fix everything real it
-surfaces. This is a **required gate** before the app is considered usable. (Kicked off this
-session; see the review output / `REVIEW.md`.)
+### WhatsApp connection — items 2–4 DONE; item 1 needs a phone
+1. **Real connection (ONLY remaining step)** — set `WHATSAPP_ENABLED=true` on the server, open
+   Settings → "Save & link WhatsApp", scan the QR with the phone, and confirm a live send. Creds
+   persist under `WHATSAPP_SESSION_DIR=/data/whatsapp` (container default) across redeploys. This
+   can't be verified without a phone.
+2. ✅ **Automatic disconnects** — capped exponential backoff + jitter reconnect in
+   `baileysAdapter`; keeps retrying after a failed attempt. Per-tick `healConnections()` reconnects
+   any drifted session and drains the outbox (`reconcileOutbox`).
+3. ✅ **Reconnect prompt** — Settings shows a live banner (off / linked / scan-QR / connecting /
+   dropped→reconnect). **Scope is reminders-only**: spin, pool, calendar all keep working without
+   WhatsApp; the reminder toggle stays gated behind an active connection.
+4. ✅ **Activation flow** — one-tap **"Save & link WhatsApp"** saves numbers + calendar emails,
+   then immediately starts the connection and surfaces the QR; reminders unlock once linked.
 
 ### Later / optional
 5. Add `RESEND_API_KEY` + both emails → verify a real calendar invite lands.
