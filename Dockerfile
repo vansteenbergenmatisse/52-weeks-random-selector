@@ -36,6 +36,14 @@ COPY --from=webbuild /app/apps/web/dist ./apps/web/dist
 WORKDIR /app/apps/server
 EXPOSE 4000
 
+# Production runtime defaults. NODE_ENV=production makes isProd true so the
+# session cookie ships with Secure (it otherwise defaults to development and the
+# cookie is sent over plain HTTP). WHATSAPP_SESSION_DIR points at the mounted
+# Railway Volume (/data) so paired Baileys creds survive redeploys instead of
+# living on ephemeral container storage. Both can still be overridden by env.
+ENV NODE_ENV=production
+ENV WHATSAPP_SESSION_DIR=/data/whatsapp
+
 # Applies migrations, seeds the couple (idempotent), then starts the API — which
 # also serves the frontend and runs the scheduling worker inline (RUN_WORKER).
 CMD ["pnpm", "start:prod"]

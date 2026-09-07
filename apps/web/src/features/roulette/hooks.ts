@@ -79,7 +79,13 @@ export function useSpin(collectionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<{ created: boolean; state: CurrentState }>(`/api/collections/${collectionId}/spin`),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Seed the result cache synchronously with the server's freshly-drawn state
+      // so the winner is available the instant the spin animation starts. Without
+      // this, the invalidate-triggered refetch lands AFTER the reel begins, the
+      // Carousel sees winner === null and bails, and the spin hangs forever on
+      // "Choosing…". The invalidate below still refetches to reconcile.
+      qc.setQueryData(["result", collectionId], { state: data.state });
       qc.invalidateQueries({ queryKey: ["result", collectionId] });
       qc.invalidateQueries({ queryKey: ["entries", collectionId] });
       qc.invalidateQueries({ queryKey: ["collections"] });

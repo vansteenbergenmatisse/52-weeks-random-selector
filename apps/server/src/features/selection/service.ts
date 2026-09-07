@@ -126,7 +126,9 @@ export async function spin(
   const { result: existing, pickLive } = await loadCurrentResult(period.id);
   if (existing) {
     if (pickLive) return { created: false, state: await getCurrentState(coupleId, collectionId) };
-    await prisma.weeklyResult.delete({ where: { id: existing.id } });
+    // deleteMany (not delete) so a concurrent re-spin that already cleared this
+    // ghost result doesn't throw P2025 → HTTP 500 for the losing caller.
+    await prisma.weeklyResult.deleteMany({ where: { id: existing.id } });
   }
 
   try {
@@ -188,15 +190,17 @@ export async function reroll(
 export async function markCompleted(coupleId: string, collectionId: string) {
   await assertCollectionInCouple(collectionId, coupleId);
   const period = await ensureCurrentPeriod(collectionId);
-  const result = await prisma.weeklyResult.findUnique({
-    where: { periodId: period.id },
-    include: { revisions: { orderBy: { revisionNumber: "desc" }, take: 1 } },
-  });
+  const { result, pick, pickLive } = await loadCurrentResult(period.id);
   if (!result) throw Errors.conflict("There is no result to complete yet");
+  // Only complete a pick that's still the live, currently-shown one. A pick
+  // whose entry was removed from the pool is a "ghost" (getCurrentState/spin
+  // already treat the week as re-spinnable); completing it would flip a deleted
+  // entry to "completed" and record an invisible completion.
+  if (!pickLive) throw Errors.conflict("This week's pick was removed — spin again first");
 
   await prisma.$transaction(async (tx) => {
     await tx.weeklyResult.update({ where: { id: result.id }, data: { completedAt: new Date() } });
-    const entryId = result.revisions[0]?.entryId;
+    const entryId = pick?.entryId;
     if (entryId) {
       // Complete only the picked entry. Any other copies of the same movie stay
       // in the pool — watching it once shouldn't sweep the film away, so it can

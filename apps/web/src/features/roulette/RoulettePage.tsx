@@ -203,7 +203,12 @@ function CollectionView({
   // click: you see this week's pick the moment you open the space. Only a spin
   // you start yourself (which sets phase to "spinning" first) still animates.
   useEffect(() => {
-    if (state?.hasResult && resultId && phase === "idle" && !alreadyRevealed) {
+    // Auto-reveal an unrevealed result whenever we're not mid-spin — covers both
+    // the initial load AND a NEW pick arriving (e.g. a fresh week) while an older
+    // one is still shown settled. Guarding on phase === "idle" left the stale pick
+    // on screen with contradictory "locked in" copy; `phase !== "spinning"` lets
+    // the new result take over without interrupting an in-progress animation.
+    if (state?.hasResult && resultId && phase !== "spinning" && !alreadyRevealed) {
       setRevealedIds((s) => new Set(s).add(resultId));
       setPhase("settled");
     }

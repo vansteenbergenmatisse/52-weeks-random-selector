@@ -255,6 +255,30 @@ export async function updateEntry(
   input: Partial<EntryInput>,
 ) {
   const e = await ownedEntry(entryId, coupleId, userId);
+
+  // Changing a movie's tmdbId must keep the "one copy per film" invariant and
+  // its IMDb link in sync.
+  const tmdbChanging = input.tmdbId !== undefined && input.tmdbId !== e.tmdbId;
+  if (e.collection.kind === "movies" && tmdbChanging && input.tmdbId != null) {
+    const dupe = await prisma.entry.findFirst({
+      where: {
+        collectionId: e.collectionId,
+        tmdbId: input.tmdbId,
+        deletedAt: null,
+        status: { in: ["available", "selected"] },
+        id: { not: e.id },
+      },
+    });
+    if (dupe) throw Errors.conflict("That movie is already in your pool");
+  }
+
+  // Keep imdbId consistent: use an explicitly supplied value, otherwise re-fetch
+  // it when the tmdbId changes (mirroring createEntry), else leave it untouched.
+  let imdbId: string | null | undefined;
+  if (input.imdbId !== undefined) imdbId = input.imdbId;
+  else if (tmdbChanging) imdbId = input.tmdbId != null ? await getImdbId(input.tmdbId) : null;
+  else imdbId = undefined;
+
   // Historical result revisions keep their own immutable snapshot, so editing
   // here never rewrites past results.
   const updated = await prisma.entry.update({
@@ -267,6 +291,7 @@ export async function updateEntry(
       cost: input.cost === undefined ? undefined : input.cost?.trim() || null,
       prep: input.prep === undefined ? undefined : input.prep?.trim() || null,
       tmdbId: input.tmdbId === undefined ? undefined : input.tmdbId,
+      imdbId,
       posterPath: input.posterPath === undefined ? undefined : input.posterPath,
       backdropPath: input.backdropPath === undefined ? undefined : input.backdropPath,
       releaseYear: input.releaseYear === undefined ? undefined : input.releaseYear,
@@ -289,6 +314,21 @@ export async function deleteEntry(coupleId: string, entryId: string) {
 export async function restoreEntry(coupleId: string, entryId: string) {
   // Undo a delete — clears the soft-delete flag so the entry returns to the pool.
   const e = await coupleEntry(entryId, coupleId);
+  // Guard the "one copy per film" invariant: while this entry was deleted the
+  // same movie may have been re-added, so restoring it would put two live copies
+  // of the same tmdbId in the pool (there's no DB unique constraint on it).
+  if (e.collection.kind === "movies" && e.tmdbId != null && e.deletedAt) {
+    const dupe = await prisma.entry.findFirst({
+      where: {
+        collectionId: e.collectionId,
+        tmdbId: e.tmdbId,
+        deletedAt: null,
+        status: { in: ["available", "selected"] },
+        id: { not: e.id },
+      },
+    });
+    if (dupe) throw Errors.conflict("That movie is already back in your pool");
+  }
   await prisma.entry.update({ where: { id: e.id }, data: { deletedAt: null } });
   publish({ type: "entries.changed", coupleId, collectionId: e.collectionId });
   return { ok: true };

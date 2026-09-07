@@ -112,6 +112,15 @@ export async function addResultToCalendar(coupleId: string, collectionId: string
   if (!result || !rev) return { ok: false, reason: "no_result" };
   if (result.calendarInvitedAt) return { ok: false, reason: "already" };
 
+  // Atomically claim the invite BEFORE sending, so two near-simultaneous triggers
+  // (both partners tapping 👍, or a 👍 racing the "Add to calendar" button) can't
+  // each read calendarInvitedAt === null across the send await and both email.
+  const claim = await prisma.weeklyResult.updateMany({
+    where: { id: result.id, calendarInvitedAt: null },
+    data: { calendarInvitedAt: new Date() },
+  });
+  if (claim.count !== 1) return { ok: false, reason: "already" };
+
   const start = period.scheduledAt;
   const end = new Date(start.getTime() + (cfg.durationMins ?? 120) * 60000);
   const ics = buildIcs({
@@ -128,9 +137,12 @@ export async function addResultToCalendar(coupleId: string, collectionId: string
     rev.snapLocation ? ` at ${rev.snapLocation}` : ""
   }. Open the attached invite to add it to your calendar.`;
   const send = await sendEmail(emails, `Our 52 — ${rev.snapTitle}`, text, ics);
-  if (!send.ok) return { ok: false, reason: send.reason };
+  if (!send.ok) {
+    // Release the claim so the invite can be retried later.
+    await prisma.weeklyResult.updateMany({ where: { id: result.id }, data: { calendarInvitedAt: null } });
+    return { ok: false, reason: send.reason };
+  }
 
-  await prisma.weeklyResult.update({ where: { id: result.id }, data: { calendarInvitedAt: new Date() } });
   publish({ type: "calendar.changed", coupleId });
   return { ok: true };
 }

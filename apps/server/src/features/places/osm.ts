@@ -1,4 +1,5 @@
 import { logger } from "../../platform/logger/logger.js";
+import { Errors } from "../../shared/errors.js";
 
 // OpenStreetMap-powered activity discovery — free, keyless.
 // Nominatim geocodes an area name ("Manhattan") to a centre point; Overpass
@@ -16,7 +17,11 @@ const OVERPASS_ENDPOINTS = [
 ];
 const USER_AGENT = "Our52/1.0 (private couples activity app)";
 const SEARCH_RADIUS_M = 3000;
-const OVERPASS_TIMEOUT_MS = 15000;
+// Cap the TOTAL time spent trying Overpass mirrors so a run of slow/overloaded
+// endpoints can't pin a request for ~50s (3 × 15s sequentially). Each mirror
+// gets at most OVERPASS_PER_MIRROR_MS, further clamped to the shared deadline.
+const OVERPASS_TOTAL_MS = 20000;
+const OVERPASS_PER_MIRROR_MS = 9000;
 
 export interface PlaceCategory {
   key: string;
@@ -179,11 +184,44 @@ interface GeoPoint {
   displayName: string;
 }
 
-const geocodeCache = new Map<string, GeoPoint | null>();
+// Bounded, TTL'd geocode cache. Negatives get a SHORT ttl so a transient empty
+// response (rate-limit, blip) doesn't permanently blacklist a valid area; the
+// map is size-capped with simple LRU eviction so it can't grow unbounded.
+interface GeoCacheEntry {
+  value: GeoPoint | null;
+  expiresAt: number;
+}
+const GEO_CACHE_MAX = 500;
+const GEO_TTL_MS = 24 * 3600e3; // positive results: a day
+const GEO_NEG_TTL_MS = 5 * 60e3; // negative results: 5 minutes
+const geocodeCache = new Map<string, GeoCacheEntry>();
+
+function geoGet(key: string): GeoCacheEntry | undefined {
+  const e = geocodeCache.get(key);
+  if (!e) return undefined;
+  if (e.expiresAt <= Date.now()) {
+    geocodeCache.delete(key);
+    return undefined;
+  }
+  // Touch for LRU recency.
+  geocodeCache.delete(key);
+  geocodeCache.set(key, e);
+  return e;
+}
+
+function geoSet(key: string, value: GeoPoint | null) {
+  geocodeCache.set(key, { value, expiresAt: Date.now() + (value ? GEO_TTL_MS : GEO_NEG_TTL_MS) });
+  while (geocodeCache.size > GEO_CACHE_MAX) {
+    const oldest = geocodeCache.keys().next().value;
+    if (oldest === undefined) break;
+    geocodeCache.delete(oldest);
+  }
+}
 
 async function geocodeArea(area: string): Promise<GeoPoint | null> {
   const key = area.trim().toLowerCase();
-  if (geocodeCache.has(key)) return geocodeCache.get(key) ?? null;
+  const cached = geoGet(key);
+  if (cached) return cached.value;
 
   const url = new URL(NOMINATIM);
   url.searchParams.set("q", area.trim());
@@ -200,11 +238,11 @@ async function geocodeArea(area: string): Promise<GeoPoint | null> {
     const lat = Number(first?.lat);
     const lon = Number(first?.lon);
     if (!first || !Number.isFinite(lat) || !Number.isFinite(lon)) {
-      geocodeCache.set(key, null);
+      geoSet(key, null);
       return null;
     }
     const point: GeoPoint = { lat, lon, displayName: first.display_name ?? area };
-    geocodeCache.set(key, point);
+    geoSet(key, point);
     return point;
   } catch (err) {
     logger.warn({ err: String(err) }, "Nominatim geocode failed");
@@ -218,7 +256,7 @@ export async function searchPlaces(
   categoryKey: string,
 ): Promise<{ area: string | null; results: PlaceResult[] }> {
   const category = PLACE_CATEGORIES.find((c) => c.key === categoryKey);
-  if (!category) throw new Error("Unknown category");
+  if (!category) throw Errors.badRequest("Unknown category");
   if (!area.trim()) return { area: null, results: [] };
 
   const point = await geocodeArea(area);
@@ -226,13 +264,16 @@ export async function searchPlaces(
 
   const query = buildOverpassQuery(category, point.lat, point.lon);
   let lastErr: unknown;
+  const deadline = Date.now() + OVERPASS_TOTAL_MS;
   for (const endpoint of OVERPASS_ENDPOINTS) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break; // shared deadline hit — stop trying more mirrors
     try {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
         body: `data=${encodeURIComponent(query)}`,
-        signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(OVERPASS_PER_MIRROR_MS, remaining)),
       });
       if (!res.ok) throw new Error(`Overpass ${res.status}`);
       const data = await res.json();

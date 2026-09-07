@@ -17,6 +17,28 @@ function esc(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
 }
 
+/**
+ * Fold a content line to the RFC 5545 75-octet limit: split on UTF-8 byte
+ * boundaries (never mid-multibyte-sequence) and continue with CRLF + one space.
+ */
+function fold(line: string): string {
+  const bytes = Buffer.from(line, "utf8");
+  if (bytes.length <= 75) return line;
+  const out: string[] = [];
+  let start = 0;
+  // First line takes 75 octets; continuation lines lose one to the leading space.
+  let limit = 75;
+  while (start < bytes.length) {
+    let end = Math.min(start + limit, bytes.length);
+    // Don't split a multi-byte sequence: back up while on a UTF-8 continuation byte.
+    while (end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+    out.push(bytes.subarray(start, end).toString("utf8"));
+    start = end;
+    limit = 74;
+  }
+  return out.join("\r\n ");
+}
+
 export interface IcsEvent {
   uid: string;
   start: Date;
@@ -51,6 +73,6 @@ export function buildIcs(ev: IcsEvent): string {
     "STATUS:CONFIRMED",
     "END:VEVENT",
     "END:VCALENDAR",
-  ].filter(Boolean);
-  return lines.join("\r\n");
+  ].filter((l): l is string => Boolean(l));
+  return lines.map(fold).join("\r\n");
 }

@@ -131,7 +131,11 @@ export async function aiPickMatches(rows: AiMatchRow[]): Promise<(number | null)
     `Return ONLY a JSON array of {"i": number, "id": number|null}, one per item, in order. No prose.\n\n` +
     `Items:\n${JSON.stringify(payload)}`;
 
-  const text = await callClaude(prompt, Math.min(2000, rows.length * 16 + 60));
+  // Budget output tokens to the batch size (each verdict {"i":N,"id":N} is ~24
+  // tokens) so a large import isn't silently truncated — a 2000-token cap cut off
+  // verdicts past ~120 rows, dropping every match after that. Clamped well under
+  // the model's real output limit.
+  const text = await callClaude(prompt, Math.min(8000, rows.length * 24 + 80));
   if (!text) return null;
   const arr = parseJsonArray(text);
   if (!arr) return null;
