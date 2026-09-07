@@ -45,7 +45,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: LIVE on Railway, running, tested.** 72 server tests pass; web build + server
+**Status: LIVE on Railway, running, tested.** 74 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
 **Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
@@ -343,7 +343,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 72 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 74 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
