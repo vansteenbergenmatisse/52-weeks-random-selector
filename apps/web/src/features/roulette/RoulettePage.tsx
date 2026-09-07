@@ -157,6 +157,7 @@ function CollectionView({
   const [spinToken, setSpinToken] = useState(0);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [calendarNote, setCalendarNote] = useState<string | null>(null);
+  const [calendarGoogleUrl, setCalendarGoogleUrl] = useState<string | null>(null);
 
   // Dialog state
   const [showSettings, setShowSettings] = useState(false);
@@ -251,13 +252,29 @@ function CollectionView({
 
   async function onAddToCalendar() {
     setCalendarNote(null);
+    setCalendarGoogleUrl(null);
     const res = await addCalendar.mutateAsync();
-    if (res.ok) setCalendarNote("💌 Invite sent to both of you — check your inbox to accept it.");
-    else if (res.reason === "not_configured") setCalendarNote("Turn on Calendar and add both emails in Settings first.");
-    else if (res.reason === "no_email_provider") setCalendarNote("Emails aren't set up on the server yet (needs a Resend key).");
-    else if (res.reason === "already") setCalendarNote("This week's pick is already on your calendars.");
-    else if (res.reason === "no_result") setCalendarNote("Spin first, then add it to your calendar.");
-    else setCalendarNote("Couldn't send the invite — check Settings → Calendar.");
+    if (res.ok && res.ics) {
+      // Download the .ics for Apple/Outlook, and surface a Google Calendar link.
+      // Keyless — nothing is emailed and no server key is required.
+      const blob = new Blob([res.ics], { type: "text/calendar;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = res.filename ?? "our52.ics";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setCalendarGoogleUrl(res.googleUrl ?? null);
+      setCalendarNote("📅 Calendar file downloaded. Or add it to Google Calendar →");
+    } else if (res.reason === "no_result") {
+      setCalendarNote("Spin first, then add it to your calendar.");
+    } else if (res.reason === "not_found") {
+      setCalendarNote("Couldn't find this collection.");
+    } else {
+      setCalendarNote("Couldn't build the calendar invite — try again.");
+    }
   }
 
   const canSpin = state && (state.hasResult || state.availableCount > 0);
@@ -345,6 +362,7 @@ function CollectionView({
               onAddToCalendar={onAddToCalendar}
               addingToCalendar={addCalendar.isPending}
               calendarNote={calendarNote}
+              calendarGoogleUrl={calendarGoogleUrl}
             />
           </div>
         )}

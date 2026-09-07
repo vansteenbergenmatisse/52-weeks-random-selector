@@ -17,6 +17,7 @@ export function ResultPanel({
   onAddToCalendar,
   addingToCalendar,
   calendarNote,
+  calendarGoogleUrl,
 }: {
   state: CurrentState;
   collection: Collection;
@@ -26,6 +27,7 @@ export function ResultPanel({
   onAddToCalendar: () => void;
   addingToCalendar: boolean;
   calendarNote: string | null;
+  calendarGoogleUrl?: string | null;
 }) {
   const r = state.result;
   if (!r) return null;
@@ -103,7 +105,21 @@ export function ResultPanel({
           </button>
         </div>
       </div>
-      {calendarNote && <p className="relative px-5 pb-3 -mt-1 text-xs text-accent">{calendarNote}</p>}
+      {calendarNote && (
+        <p className="relative px-5 pb-3 -mt-1 text-xs text-accent">
+          {calendarNote}
+          {calendarGoogleUrl && (
+            <a
+              href={calendarGoogleUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-1 underline font-semibold"
+            >
+              Google Calendar
+            </a>
+          )}
+        </p>
+      )}
     </div>
   );
 }

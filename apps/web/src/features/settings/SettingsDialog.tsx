@@ -111,8 +111,9 @@ export function SettingsDialog({
     setRecips((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
 
-  /** Save the recipient numbers (and any calendar emails), then immediately start
-   *  the WhatsApp connection so the QR appears to scan. One tap does activation. */
+  /** Start the WhatsApp connection so the QR appears to scan. Recipient numbers are
+   *  OPTIONAL — reminders default to the linked phone's own number, so linking alone
+   *  activates them. Any numbers typed in are saved as additional recipients. */
   async function saveAndLink() {
     setWaNote(null);
     const list = recips
@@ -123,14 +124,15 @@ export function SettingsDialog({
       setWaNote(`"${bad}" doesn't look right — check the number after the country code.`);
       return;
     }
-    if (list.length === 0) {
-      setWaNote("Add at least one recipient number first.");
-      return;
-    }
     setBusy(true);
     try {
-      await api.patch("/api/whatsapp/config", { deliveryMode: "individuals", recipients: list });
-      // Persist calendar emails too if given — the third activation requirement.
+      // Only persist config when extra numbers were given; otherwise leave it empty
+      // and let the outbox fall back to the linked phone's own number.
+      if (list.length) {
+        await api.patch("/api/whatsapp/config", { deliveryMode: "individuals", recipients: list });
+      }
+      // Persist calendar emails too if given (optional — the keyless "Add to
+      // calendar" button works without them).
       const emails = [emailA.trim(), emailB.trim()].filter(Boolean);
       if (emails.length) {
         await api.patch("/api/calendar/config", { enabled: true, emails });
@@ -237,7 +239,7 @@ export function SettingsDialog({
           />
           {!wa?.activated && (
             <p className="text-faint text-xs">
-              🔒 Finish WhatsApp activation below (phone, linked device, and email) to turn reminders on.
+              🔒 Link WhatsApp below (scan the QR) to turn reminders on — they go to the linked phone.
             </p>
           )}
         </div>
@@ -279,24 +281,22 @@ export function SettingsDialog({
               <p className="text-xs text-muted mt-1">
                 {wa?.hasPhone
                   ? "The link dropped. Tap “Save & link WhatsApp” and scan the QR to keep reminders flowing."
-                  : "Add a recipient number and tap “Save & link WhatsApp”, then scan the QR to enable reminders."}
+                  : "Tap “Save & link WhatsApp” and scan the QR to enable reminders — no number needed."}
               </p>
             </div>
           )}
 
-          {/* One-time activation checklist — all three are required before the
-              reminder toggle above unlocks. */}
+          {/* Activation — linking the phone is the ONLY requirement; its own number
+              becomes the default reminder recipient. */}
           <div className="rounded-lg bg-panel-2 border border-line p-3">
             <p className="u-label mb-2">Activation · required to send reminders</p>
             <ul className="space-y-1 text-sm text-ink">
-              <li>{wa?.hasPhone ? "✅" : "⬜"} Add a recipient phone number</li>
               <li>{wa?.linked ? "✅" : "⬜"} Link WhatsApp (scan the QR)</li>
-              <li>{wa?.hasEmail ? "✅" : "⬜"} Add an email for calendar invites</li>
             </ul>
             <p className={`text-xs mt-2 ${wa?.activated ? "text-accent" : "text-faint"}`}>
               {wa?.activated
-                ? "All set — reminders can be enabled above."
-                : "Complete all three, then turn on the reminder toggle."}
+                ? "All set — reminders can be enabled above. They go to the linked phone by default."
+                : "Link a phone, then turn on the reminder toggle. Extra recipient numbers below are optional."}
             </p>
           </div>
 
@@ -322,7 +322,7 @@ export function SettingsDialog({
             </div>
           )}
           <div>
-            <label className="u-label block mb-1">Recipient numbers</label>
+            <label className="u-label block mb-1">Extra recipient numbers (optional)</label>
             <div className="space-y-2">
               {recips.map((r, i) => (
                 <div key={i} className="flex gap-2">
@@ -371,7 +371,7 @@ export function SettingsDialog({
                 Save & link WhatsApp
               </button>
             </div>
-            <p className="text-faint text-xs mt-1">Pick the country (the +prefix) and enter the rest of the number.</p>
+            <p className="text-faint text-xs mt-1">Reminders go to the linked phone by default. Add numbers here only to also notify others (pick the country +prefix, then the rest).</p>
           </div>
           <div className="flex items-center justify-between">
             <button className="rounded-md bg-panel-3 border border-line px-3 py-2 text-sm hover:border-accent" onClick={sendTest} disabled={busy}>
@@ -384,7 +384,12 @@ export function SettingsDialog({
         {/* ── Calendar invites ── */}
         <div className="border-t border-line pt-4 space-y-3">
           <h3 className="u-display text-sm text-ink">Calendar invites (shared)</h3>
-          <Toggle checked={calEnabled} onChange={setCalEnabled} label="Offer to add each weekly pick to your calendars" />
+          <p className="text-faint text-xs">
+            The “Add to calendar” button on each week’s pick downloads a calendar file and gives a
+            one-tap Google Calendar link — no setup needed. The emails below are optional, only for
+            auto-emailing invites (needs a Resend key on the server).
+          </p>
+          <Toggle checked={calEnabled} onChange={setCalEnabled} label="Also email the pick to both of you each week (optional)" />
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="u-label block mb-1">Your email</label>

@@ -50,6 +50,29 @@ export interface IcsEvent {
   attendeeEmails: string[];
 }
 
+/**
+ * Build an "Add to Google Calendar" template link for a single event. Keyless —
+ * opening it prefills Google Calendar's new-event form, so a partner adds the
+ * pick to their own calendar with one tap, no email provider needed. Reuses the
+ * same compact-UTC stamps as the .ics so both surfaces agree on the time.
+ */
+export function googleCalendarUrl(ev: {
+  title: string;
+  start: Date;
+  end: Date;
+  description?: string | null;
+  location?: string | null;
+}): string {
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: ev.title,
+    dates: `${icsUtc(ev.start)}/${icsUtc(ev.end)}`,
+  });
+  if (ev.description) params.set("details", ev.description);
+  if (ev.location) params.set("location", ev.location);
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
 export function buildIcs(ev: IcsEvent): string {
   const now = new Date();
   const lines = [

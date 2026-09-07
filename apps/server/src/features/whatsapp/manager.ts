@@ -71,9 +71,12 @@ export async function disconnect(coupleId: string): Promise<void> {
 }
 
 /**
- * Activation gate for WhatsApp reminders. Reminders are opt-in and must not
- * fire until the couple has completed the one-time setup: a phone recipient,
- * a linked (connected) WhatsApp session, and an email for calendar invites.
+ * Activation gate for WhatsApp reminders. Reminders are opt-in and must not fire
+ * until the couple has a WhatsApp session we can actually send on. That's just a
+ * linked phone: linking captures the device's own number (session.phone), which
+ * the outbox uses as the default recipient — so no number needs to be typed in.
+ * `hasEmail` is reported for the (separate, keyless) calendar feature but does
+ * NOT gate reminders.
  */
 export interface Activation {
   hasPhone: boolean;
@@ -88,14 +91,18 @@ export async function getActivation(coupleId: string): Promise<Activation> {
     prisma.whatsAppSession.findUnique({ where: { coupleId } }),
     prisma.calendarConfig.findUnique({ where: { coupleId } }),
   ]);
-  // In group mode a configured group id is the "recipient"; otherwise we need at
-  // least one individual number. Either satisfies the phone half of activation.
-  const hasPhone =
+  const linked = session?.status === "connected";
+  // In group mode a configured group id is the "recipient"; for individuals a
+  // typed number works, but a linked phone ALSO supplies one (its own number),
+  // so an explicit recipient is no longer required to send.
+  const hasManualPhone =
     !!config &&
     (config.deliveryMode === "group" ? !!config.groupId : safeArr(config.recipients).length > 0);
-  const linked = session?.status === "connected";
+  const hasPhone = hasManualPhone || (linked && !!session?.phone);
   const hasEmail = !!calendar && safeArr(calendar.emails).length > 0;
-  return { hasPhone, linked, hasEmail, activated: hasPhone && linked && hasEmail };
+  // Reminders only need a linked phone we can send to; calendar email is a
+  // separate, keyless feature and no longer part of the reminder gate.
+  return { hasPhone, linked, hasEmail, activated: linked && hasPhone };
 }
 
 /** True only when reminders are allowed to send for this couple. */

@@ -2,6 +2,8 @@ import { beforeEach, afterAll, describe, expect, it } from "vitest";
 import { prisma } from "../src/platform/db/prisma.js";
 import * as selection from "../src/features/selection/service.js";
 import { handleInbound } from "../src/features/whatsapp/commands.js";
+import { resolveTargets } from "../src/features/whatsapp/outbox.js";
+import { getActivation } from "../src/features/whatsapp/manager.js";
 import { addEntries, makeCouple, resetDb } from "./helpers.js";
 
 const SENDER = "15551230000";
@@ -157,5 +159,49 @@ describe("whatsapp inbound commands", () => {
       fromMe: false,
     });
     expect((await selection.getCurrentState(couple.id, dates.id)).completed).toBe(false);
+  });
+});
+
+describe("whatsapp recipient derives from the linked phone", () => {
+  it("resolveTargets falls back to the linked phone's own number when none configured", async () => {
+    const { couple } = await makeCouple();
+    await prisma.whatsAppSession.create({
+      data: { coupleId: couple.id, status: "connected", phone: SENDER },
+    });
+    // No whatsAppConfig / recipients at all → default to the paired device.
+    expect(await resolveTargets(couple.id)).toEqual([`${SENDER}@c.us`]);
+  });
+
+  it("an explicit recipient overrides the linked-phone fallback", async () => {
+    const { couple } = await makeCouple();
+    await prisma.whatsAppSession.create({
+      data: { coupleId: couple.id, status: "connected", phone: SENDER },
+    });
+    await prisma.whatsAppConfig.create({
+      data: { coupleId: couple.id, deliveryMode: "individuals", recipients: JSON.stringify(["+31612345678"]) },
+    });
+    expect(await resolveTargets(couple.id)).toEqual(["31612345678@c.us"]);
+  });
+
+  it("activates on a linked phone alone — no typed number, no calendar email", async () => {
+    const { couple } = await makeCouple();
+    await prisma.whatsAppSession.create({
+      data: { coupleId: couple.id, status: "connected", phone: SENDER },
+    });
+    const act = await getActivation(couple.id);
+    expect(act.linked).toBe(true);
+    expect(act.hasPhone).toBe(true);
+    expect(act.hasEmail).toBe(false);
+    expect(act.activated).toBe(true);
+  });
+
+  it("is not activated until the phone is linked", async () => {
+    const { couple } = await makeCouple();
+    expect((await getActivation(couple.id)).activated).toBe(false);
+    // A disconnected session with a known number still isn't sendable.
+    await prisma.whatsAppSession.create({
+      data: { coupleId: couple.id, status: "disconnected", phone: SENDER },
+    });
+    expect((await getActivation(couple.id)).activated).toBe(false);
   });
 });

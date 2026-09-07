@@ -7,12 +7,31 @@
 
 ## 0. ACTIVE TODO (2026-09-07) — honest status
 
+### This session's changes (2026-09-07, later) — WhatsApp self-config + keyless calendar
+
+Reduce the manual setup so the couple can just link a phone and test. **All ✅ done in code
+(80 tests pass); WhatsApp still needs the `WHATSAPP_ENABLED=true` flag + one live scan.**
+
+1. ✅ **[WhatsApp] No recipient number to type.** Linking captures the paired device's OWN
+   number (`session.phone`, from Baileys `sock.user.id`). `resolveTargets` now defaults to that
+   number when no recipient is configured, so reminders + the Test button send to the linked
+   phone with zero typing. Explicit numbers (in Settings) still override / add extra recipients.
+2. ✅ **[WhatsApp] Activation = link only.** `getActivation` now activates on a linked phone
+   alone; the calendar-email requirement is **decoupled** from reminders (it never belonged
+   there). Settings checklist is now one step ("Link WhatsApp"), banners/help updated.
+3. ✅ **[Calendar] Keyless "Add to calendar".** New `GET /api/collections/:id/calendar/current`
+   returns the pick's `.ics` text + an "Add to Google Calendar" link. The web button now
+   downloads the `.ics` and shows a Google link — **no Resend key, no configured emails**. The
+   old email-via-Resend path stays as an optional extra.
+
+### Prior sub-session (2026-09-07, earlier)
+
 Corrections after the last session over-claimed. **WhatsApp was NOT actually working** — the
 code was hardened but prod ran the *fixture* adapter (`WHATSAPP_ENABLED` unset → false), so
 "Connect" faked a link and no QR ever appeared. Verified locally that the Baileys QR path DOES
 produce a real scannable QR (7KB PNG data URL), so the blocker is purely the flag + a live scan.
 
-Work in this session (all ✅ done in code; WhatsApp needs the flag flipped + a live scan):
+Work in that sub-session (all ✅ done in code; WhatsApp needs the flag flipped + a live scan):
 
 1. ✅ **[WhatsApp] Make it actually link.** Library stays **Baileys** (`baileys@7.0.0-rc14`, free,
    no Chromium — confirmed emits a real QR). Set `WHATSAPP_ENABLED=true` +
@@ -45,7 +64,7 @@ calendars, and (optionally) drive it all from WhatsApp with 🔄 / ✅ / 👍 re
 The couple is **Teresa & Matisse**. The look is a warm, romantic **"fun love"**
 theme (sunset/berry tones, no blue) with a per-person accent colour.
 
-**Status: LIVE on Railway, running, tested.** 74 server tests pass; web build + server
+**Status: LIVE on Railway, running, tested.** 80 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
 **Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
@@ -319,17 +338,25 @@ library-agnostic `WhatsAppAdapter`). Shared selection logic drives web + WhatsAp
 🔄/✅ reactions and REROLL/DONE replies are deduped, authorised, and guarded against
 superseded results. Outbox reconciles uncertain sends. **Currently the fixture
 adapter is active** (`WHATSAPP_ENABLED=false`) — messages are recorded, not delivered.
-Recipient numbers require a country code (E.164); Settings has a country-prefix picker.
-**Reminders are opt-in**: they never fire until the couple completes a one-time **activation**
-(phone recipient + linked WhatsApp session + calendar email). The reminder toggle is disabled
-until then (Settings shows a 3-step checklist); the worker + `updateCollection` both enforce
-the gate (`whatsapp.isActivated`), so nothing sends before setup is complete.
+**Recipient is auto-derived from the connection**: on connect Baileys reports the paired
+device's own number (`sock.user.id` → `session.phone`), and `resolveTargets` defaults to it when
+no recipient is configured — so reminders + the Test button reach the linked phone with nothing
+typed in. Extra numbers can still be added in Settings (E.164, country-prefix picker) to notify
+others; an explicit recipient/group overrides the fallback.
+**Reminders are opt-in**: they never fire until the couple completes **activation**, which is now
+just **a linked WhatsApp session** (`getActivation.activated = linked && hasPhone`, and a linked
+phone satisfies `hasPhone`). The calendar-email requirement was **decoupled** — it has nothing to
+do with sending a reminder. The reminder toggle is disabled until linked; the worker +
+`updateCollection` both enforce the gate (`whatsapp.isActivated`).
 
-**Calendar** (`features/calendar/*`): after a weekly pick, a second "📅 add to
-calendar?" WhatsApp message is enqueued (when configured); a **👍** on it — or the
-"Add to calendar" button in the app — emails an `.ics` invite (via Resend) to both
-partners. Idempotent per pick (`calendarInvitedAt`). Event time = the collection's
-scheduled slot; location included.
+**Calendar** (`features/calendar/*`): the app's **"Add to calendar" button is keyless** —
+`GET /api/collections/:id/calendar/current` (`getCurrentInvite`) returns the pick's `.ics` text
+plus an "Add to Google Calendar" template link; the web downloads the `.ics` and surfaces the
+Google link, so either partner adds it to their own calendar with **no Resend key and no
+configured emails**. Event time = the collection's scheduled slot; location included.
+**Optional email path (needs Resend):** after a weekly pick, a "📅 add to calendar?" WhatsApp
+message is enqueued *when calendar emails are configured*; a **👍** on it — or `addResultToCalendar`
+— emails the `.ics` to both partners via Resend, idempotent per pick (`calendarInvitedAt`).
 
 **Theme**: warm "fun love" palette (no blue) in `tailwind.config.js` + `styles/index.css`;
 `--accent` is a CSS variable overridden per logged-in user (Teresa → rose, Matisse →
@@ -343,7 +370,7 @@ invalidates React Query. Fallback: refetch on window focus.
 ## 7. Tests & verification
 
 ```bash
-pnpm --filter @our52/server test          # 74 tests (SQLite; schema auto-created by globalSetup)
+pnpm --filter @our52/server test          # 80 tests (SQLite; schema auto-created by globalSetup)
 pnpm --filter @our52/server exec tsc --noEmit -p tsconfig.json   # server typecheck
 pnpm --filter @our52/web build            # tsc + vite build
 ```
@@ -393,8 +420,10 @@ optional (a strong random one is generated on first seed otherwise, never logged
   someone to scan). Unofficial client — can still drop; the reconnect/heal logic is untested
   against a live socket.
 - **SMS is not implemented** (WhatsApp-only, by choice).
-- **Calendar delivery unverified** — needs `RESEND_API_KEY` + both emails in Settings.
-  The `.ics` build + 👍/button trigger + idempotency are coded and tested.
+- **Calendar (keyless) works with no keys** — the "Add to calendar" button downloads the `.ics`
+  and offers a Google Calendar link (`getCurrentInvite`, tested). Only the **optional** email
+  path (auto-emailing the invite to both partners) is unverified — that one needs
+  `RESEND_API_KEY` + both emails in Settings.
 - **Railway deploy DONE** ✅ — live at the URL in §1 as **one service** (API serves the web
   app) built from the root `Dockerfile`, with a Volume at `/data`,
   `DATABASE_URL=file:/data/our52.db`, and `SESSION_SECRET`/`APP_BASE_URL`/`CORS_ORIGINS`/keys
@@ -420,9 +449,10 @@ The system-wide bug hunt ran (41 agents, adversarially verified) → **29 confir
 
 ### WhatsApp connection — items 2–4 DONE; item 1 needs a phone
 1. **Real connection (ONLY remaining step)** — set `WHATSAPP_ENABLED=true` on the server, open
-   Settings → "Save & link WhatsApp", scan the QR with the phone, and confirm a live send. Creds
-   persist under `WHATSAPP_SESSION_DIR=/data/whatsapp` (container default) across redeploys. This
-   can't be verified without a phone.
+   Settings → "Save & link WhatsApp" (**no recipient number needed** now), scan the QR with the
+   phone, then tap "Send test message" to confirm a live send to the linked phone. Creds persist
+   under `WHATSAPP_SESSION_DIR=/data/whatsapp` (container default) across redeploys. This can't be
+   verified without a phone.
 2. ✅ **Automatic disconnects** — capped exponential backoff + jitter reconnect in
    `baileysAdapter`; keeps retrying after a failed attempt. Per-tick `healConnections()` reconnects
    any drifted session and drains the outbox (`reconcileOutbox`).
@@ -433,7 +463,9 @@ The system-wide bug hunt ran (41 agents, adversarially verified) → **29 confir
    then immediately starts the connection and surfaces the QR; reminders unlock once linked.
 
 ### Later / optional
-5. Add `RESEND_API_KEY` + both emails → verify a real calendar invite lands.
+5. (Optional) Add `RESEND_API_KEY` + both emails → verify the *emailed* calendar invite lands.
+   Not required for calendar: the keyless "Add to calendar" button (download + Google link) works
+   with no keys.
 6. `docker compose up --build` smoke test (validates the local two-service compose path).
 7. Custom collections UI (backend supports them; add a "＋ New collection" tab entry).
 8. Import personal IMDb ratings via CSV; multi-instance realtime (swap in-process bus for

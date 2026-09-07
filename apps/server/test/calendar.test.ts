@@ -64,3 +64,31 @@ describe("calendar config + prompt", () => {
     expect(await prisma.outboundMessage.count({ where: { coupleId: couple.id, kind: "calendar_prompt" } })).toBe(1);
   });
 });
+
+describe("calendar keyless invite (getCurrentInvite)", () => {
+  it("builds an .ics + Google Calendar link with no config, emails, or Resend key", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["Sunset picnic"]);
+    await selection.spin(couple.id, dates.id, { source: "web" });
+
+    const inv = await calendar.getCurrentInvite(couple.id, dates.id);
+    expect(inv.ok).toBe(true);
+    expect(inv.ics).toContain("BEGIN:VEVENT");
+    expect(inv.ics).toContain("Sunset picnic");
+    expect(inv.googleUrl).toContain("calendar.google.com");
+    expect(inv.googleUrl).toContain("action=TEMPLATE");
+    expect(inv.filename).toBe("our52.ics");
+  });
+
+  it("returns no_result before a spin, and not_found for a foreign collection", async () => {
+    const { couple, dates } = await makeCouple();
+    const before = await calendar.getCurrentInvite(couple.id, dates.id);
+    expect(before.ok).toBe(false);
+    expect(before.reason).toBe("no_result");
+
+    const other = await makeCouple();
+    const foreign = await calendar.getCurrentInvite(couple.id, other.dates.id);
+    expect(foreign.ok).toBe(false);
+    expect(foreign.reason).toBe("not_found");
+  });
+});

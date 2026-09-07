@@ -14,9 +14,16 @@ export interface EnqueueInput {
 /** Resolve the target chat ids from a couple's WhatsApp config. */
 export async function resolveTargets(coupleId: string): Promise<string[]> {
   const cfg = await prisma.whatsAppConfig.findUnique({ where: { coupleId } });
-  if (!cfg) return [];
-  if (cfg.deliveryMode === "group") return cfg.groupId ? [cfg.groupId] : [];
-  const recipients = safeJsonArray(cfg.recipients);
+  if (cfg?.deliveryMode === "group") return cfg.groupId ? [cfg.groupId] : [];
+  let recipients = cfg ? safeJsonArray(cfg.recipients) : [];
+  if (recipients.length === 0) {
+    // No recipient was typed in — default to the linked phone's OWN number, which
+    // Baileys captures on connect (session.phone). This lets a couple link their
+    // phone and immediately get reminders on that device without ever entering a
+    // number. An explicit recipient (or group) always takes precedence when set.
+    const session = await prisma.whatsAppSession.findUnique({ where: { coupleId } });
+    if (session?.phone) recipients = [session.phone];
+  }
   // Normalise bare phone numbers to WhatsApp chat ids.
   return recipients.map((r) => (r.includes("@") ? r : `${r.replace(/\D/g, "")}@c.us`));
 }

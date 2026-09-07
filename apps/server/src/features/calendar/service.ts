@@ -3,7 +3,7 @@ import { prisma } from "../../platform/db/prisma.js";
 import { env, resendEnabled } from "../../platform/config/env.js";
 import { logger } from "../../platform/logger/logger.js";
 import { publish } from "../../platform/realtime/bus.js";
-import { buildIcs } from "./ics.js";
+import { buildIcs, googleCalendarUrl } from "./ics.js";
 import { enqueue } from "../whatsapp/outbox.js";
 import { formatCalendarPrompt } from "../whatsapp/format.js";
 import { ensureCurrentPeriod, getCurrentState, type CurrentState } from "../selection/service.js";
@@ -90,6 +90,57 @@ async function sendEmail(to: string[], subject: string, text: string, ics: strin
     logger.warn({ err: String(err) }, "Resend calendar email errored");
     return { ok: false as const, reason: "send_failed" };
   }
+}
+
+export interface CurrentInvite {
+  ok: boolean;
+  reason?: string;
+  title?: string;
+  ics?: string;
+  googleUrl?: string;
+  filename?: string;
+}
+
+/**
+ * Build a keyless calendar invite for a collection's CURRENT weekly pick: the raw
+ * .ics text (for download / Apple / Outlook) plus an "Add to Google Calendar"
+ * link. Needs no Resend key, no configured emails, and no calendar toggle — it's
+ * the self-serve path so either partner can add the pick to their own calendar.
+ */
+export async function getCurrentInvite(coupleId: string, collectionId: string): Promise<CurrentInvite> {
+  const collection = await prisma.collection.findUnique({ where: { id: collectionId } });
+  if (!collection || collection.coupleId !== coupleId) return { ok: false, reason: "not_found" };
+
+  const period = await ensureCurrentPeriod(collectionId);
+  const result = await prisma.weeklyResult.findUnique({
+    where: { periodId: period.id },
+    include: { revisions: { orderBy: { revisionNumber: "desc" }, take: 1 } },
+  });
+  const rev = result?.revisions[0];
+  if (!result || !rev) return { ok: false, reason: "no_result" };
+
+  const cfg = await prisma.calendarConfig.findUnique({ where: { coupleId } });
+  const start = period.scheduledAt;
+  const end = new Date(start.getTime() + (cfg?.durationMins ?? 120) * 60000);
+  const title = `${collection.emoji} ${rev.snapTitle}`;
+  const ics = buildIcs({
+    uid: `our52-${result.id}-r${rev.revisionNumber}@our52`,
+    start,
+    end,
+    title,
+    description: rev.snapDescription,
+    location: rev.snapLocation,
+    organizerEmail: fromEmail(),
+    attendeeEmails: parseEmails(cfg?.emails),
+  });
+  const googleUrl = googleCalendarUrl({
+    title,
+    start,
+    end,
+    description: rev.snapDescription,
+    location: rev.snapLocation,
+  });
+  return { ok: true, title, ics, googleUrl, filename: "our52.ics" };
 }
 
 export type CalendarAddResult = { ok: boolean; reason?: string };

@@ -69,9 +69,19 @@ export function useCalendar(enabled: boolean) {
   });
 }
 
+export interface CalendarInvite {
+  ok: boolean;
+  reason?: string;
+  title?: string;
+  ics?: string;
+  googleUrl?: string;
+  filename?: string;
+}
+
+/** Keyless "add to calendar": fetch this week's pick as an .ics + Google link. */
 export function useAddToCalendar(collectionId: string) {
   return useMutation({
-    mutationFn: () => api.post<{ ok: boolean; reason?: string }>(`/api/collections/${collectionId}/calendar`),
+    mutationFn: () => api.get<CalendarInvite>(`/api/collections/${collectionId}/calendar/current`),
   });
 }
 
