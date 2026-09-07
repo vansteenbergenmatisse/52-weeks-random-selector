@@ -85,14 +85,71 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
     this.statusCb?.(s, this._phone);
   }
 
+  /**
+   * Resolve the WhatsApp-Web client version to pair with. Tries WhatsApp's live
+   * version first, then the Baileys-maintained one, each bounded by a short
+   * timeout. Returns undefined on total failure so the socket falls back to the
+   * library's bundled default (still lets the app boot offline).
+   */
+  private async resolveWaVersion(
+    fetchLatestWaWebVersion?: (opts?: unknown) => Promise<{ version: [number, number, number] }>,
+    fetchLatestBaileysVersion?: (opts?: unknown) => Promise<{ version: [number, number, number] }>,
+  ): Promise<[number, number, number] | undefined> {
+    const withTimeout = async (p: Promise<{ version: [number, number, number] }>) => {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        const timeout = new Promise<never>((_, rej) => {
+          timer = setTimeout(() => rej(new Error("wa-version fetch timeout")), 6000);
+        });
+        const res = await Promise.race([p, timeout]);
+        return res.version;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    const sources: Array<[string, undefined | (() => Promise<{ version: [number, number, number] }>)]> = [
+      ["waweb", fetchLatestWaWebVersion ? () => fetchLatestWaWebVersion() : undefined],
+      ["baileys", fetchLatestBaileysVersion ? () => fetchLatestBaileysVersion() : undefined],
+    ];
+    for (const [name, fn] of sources) {
+      if (!fn) continue;
+      try {
+        const version = await withTimeout(fn());
+        if (Array.isArray(version) && version.length === 3) {
+          logger.info({ class: "baileys", source: name, version }, "using WhatsApp Web version");
+          return version;
+        }
+      } catch (err) {
+        logger.warn({ class: "baileys", source: name, err: (err as Error).message }, "could not fetch WA version");
+      }
+    }
+    logger.warn({ class: "baileys" }, "falling back to bundled WhatsApp Web version");
+    return undefined;
+  }
+
   async connect(): Promise<void> {
     if (this.sock) return;
     this.closing = false;
 
     const baileys = (await import("baileys")) as any;
     const makeWASocket = baileys.default ?? baileys.makeWASocket;
-    const { useMultiFileAuthState, DisconnectReason, Browsers, jidNormalizedUser } = baileys;
+    const {
+      useMultiFileAuthState,
+      DisconnectReason,
+      Browsers,
+      jidNormalizedUser,
+      fetchLatestWaWebVersion,
+      fetchLatestBaileysVersion,
+    } = baileys;
     const QRCode = (await import("qrcode")).default as any;
+
+    // WhatsApp rejects the pairing handshake ("Couldn't link device — check your
+    // connection") when the client's WA-Web version is stale. The version baked
+    // into the pinned Baileys build drifts behind WhatsApp's servers, so fetch the
+    // live version at connect time. Prefer WhatsApp's own value; fall back to the
+    // Baileys-maintained one, then to the bundled default. Bounded so a slow/blocked
+    // fetch never hangs linking.
+    const version = await this.resolveWaVersion(fetchLatestWaWebVersion, fetchLatestBaileysVersion);
     this.normalizeJid = (jid: string) => {
       try {
         return jidNormalizedUser(jid);
@@ -105,6 +162,7 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
     const { state, saveCreds } = await useMultiFileAuthState(dir);
 
     const sock = makeWASocket({
+      ...(version ? { version } : {}),
       auth: state,
       browser: Browsers.appropriate("Our52"),
       markOnlineOnConnect: false,
