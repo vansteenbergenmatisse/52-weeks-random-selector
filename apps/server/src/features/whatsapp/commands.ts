@@ -16,16 +16,22 @@ function normalizePhone(id: string): string {
   return id.replace(/@.*/, "").replace(/\D/g, "");
 }
 
-async function isAuthorizedSender(coupleId: string, senderId: string): Promise<boolean> {
+async function isAuthorizedSender(coupleId: string, event: InboundEvent): Promise<boolean> {
   const cfg = await prisma.whatsAppConfig.findUnique({ where: { coupleId } });
   if (!cfg) return false;
+  // Group mode: a command in the configured group is authorized. Replies carry
+  // the chat id so we can verify it directly; reactions don't, so those fall
+  // through to the recipient allowlist below (a member's own number).
+  if (cfg.deliveryMode === "group" && cfg.groupId && event.kind === "reply" && event.chatId === cfg.groupId) {
+    return true;
+  }
   let recipients: string[] = [];
   try {
     recipients = JSON.parse(cfg.recipients);
   } catch {
     recipients = [];
   }
-  const sender = normalizePhone(senderId);
+  const sender = normalizePhone(event.senderId);
   return recipients.map(normalizePhone).includes(sender);
 }
 
@@ -56,7 +62,7 @@ export async function handleInbound(coupleId: string, event: InboundEvent): Prom
   if (event.fromMe) return; // never act on the paired account's own messages
   if (event.kind === "reaction" && event.removed) return; // ignore reaction removals
 
-  if (!(await isAuthorizedSender(coupleId, event.senderId))) {
+  if (!(await isAuthorizedSender(coupleId, event))) {
     logger.info({ coupleId }, "Ignoring WhatsApp event from unauthorized sender");
     return;
   }

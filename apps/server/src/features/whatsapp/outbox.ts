@@ -56,10 +56,40 @@ export async function enqueue(input: EnqueueInput): Promise<string[]> {
   return ids;
 }
 
+const MAX_ATTEMPTS = 5;
+const RETRY_GRACE_MS = 2 * 60_000;
+
+/**
+ * Reconcile rows that flushOutbox left in a non-terminal state, then flush.
+ * Without this, a row that goes "failed" (adapter returned ok:false — never
+ * sent) or "uncertain" (send threw / process crashed mid-send) is a permanent
+ * dead end and the message is silently lost.
+ *
+ * - "failed" definitely didn't go out, so it's safe to resend.
+ * - "uncertain" MIGHT have gone out; Baileys can't cheaply confirm delivery, so
+ *   we retry it too but only after a grace period and under a low attempt cap —
+ *   a rare duplicate reminder is far better than silently dropping the week's
+ *   pick. Attempts are bounded so a permanently-bad row eventually gives up.
+ */
+export async function reconcileOutbox(adapter: WhatsAppAdapter): Promise<void> {
+  const cutoff = new Date(Date.now() - RETRY_GRACE_MS);
+  await prisma.outboundMessage.updateMany({
+    where: {
+      coupleId: adapter.coupleId,
+      status: { in: ["failed", "uncertain"] },
+      attempts: { lt: MAX_ATTEMPTS },
+      chatId: { not: null },
+      OR: [{ sentAt: null }, { sentAt: { lt: cutoff } }],
+    },
+    data: { status: "pending" },
+  });
+  await flushOutbox(adapter);
+}
+
 /**
  * Send all pending outbox rows for a couple via its adapter. Uncertain sends
- * are marked "uncertain" for later reconciliation rather than blindly retried,
- * so a partner never gets the same message twice.
+ * are marked "uncertain" for later reconciliation (see reconcileOutbox) rather
+ * than blindly retried inline, so a partner never gets the same message twice.
  */
 export async function flushOutbox(adapter: WhatsAppAdapter): Promise<void> {
   const pending = await prisma.outboundMessage.findMany({

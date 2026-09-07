@@ -111,7 +111,9 @@ export function SettingsDialog({
     setRecips((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
 
-  async function saveRecipients() {
+  /** Save the recipient numbers (and any calendar emails), then immediately start
+   *  the WhatsApp connection so the QR appears to scan. One tap does activation. */
+  async function saveAndLink() {
     setWaNote(null);
     const list = recips
       .filter((r) => r.national.trim())
@@ -121,12 +123,33 @@ export function SettingsDialog({
       setWaNote(`"${bad}" doesn't look right — check the number after the country code.`);
       return;
     }
+    if (list.length === 0) {
+      setWaNote("Add at least one recipient number first.");
+      return;
+    }
+    setBusy(true);
     try {
       await api.patch("/api/whatsapp/config", { deliveryMode: "individuals", recipients: list });
+      // Persist calendar emails too if given — the third activation requirement.
+      const emails = [emailA.trim(), emailB.trim()].filter(Boolean);
+      if (emails.length) {
+        await api.patch("/api/calendar/config", { enabled: true, emails });
+        setCalEnabled(true);
+      }
+      // Only start a real pairing when the server has WhatsApp enabled — otherwise
+      // the fixture adapter would report a fake "connected" with no phone linked.
+      if (wa?.enabled) {
+        await api.post("/api/whatsapp/connect");
+        setWaNote("Saved. Scan the QR below to finish linking.");
+      } else {
+        setWaNote("Saved. Enable WhatsApp on the server to pair a phone.");
+      }
       qc.invalidateQueries({ queryKey: ["whatsapp"] });
-      setWaNote("Saved.");
+      qc.invalidateQueries({ queryKey: ["calendar"] });
     } catch (err) {
-      setWaNote(err instanceof ApiError ? err.message : "Could not save numbers.");
+      setWaNote(err instanceof ApiError ? err.message : "Couldn't save & connect.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -223,17 +246,43 @@ export function SettingsDialog({
         <div className="border-t border-line pt-4 space-y-3">
           <h3 className="u-display text-sm text-ink">WhatsApp reminders (shared)</h3>
 
-          {/* Known issue banner: live WhatsApp pairing/sending is not working yet
-              (fixture adapter; real Baileys pairing + auto-reconnect unverified).
-              This is the next thing to fix — see PLAN.md §10. */}
-          <div className="rounded-lg border border-card-red/40 bg-card-red/10 p-3">
-            <p className="text-sm text-ink font-semibold">⚠️ WhatsApp connection isn&apos;t working yet</p>
-            <p className="text-xs text-muted mt-1">
-              Live WhatsApp pairing and reminders aren&apos;t functional right now, and the link can drop on
-              its own — fixing the connection (and keeping it connected) is the next task on our list. You can
-              still fill in the details below, but nothing will send until it&apos;s fixed.
-            </p>
-          </div>
+          {/* Live connection banner — reflects the real adapter state and prompts a
+              re-link when the session has dropped (reminders-only scope). */}
+          {!wa?.enabled ? (
+            <div className="rounded-lg border border-line bg-panel-2 p-3">
+              <p className="text-sm text-ink font-semibold">WhatsApp delivery is off on the server</p>
+              <p className="text-xs text-muted mt-1">
+                Fill in the details below now; set <code>WHATSAPP_ENABLED=true</code> on the server to pair a
+                phone and go live. Spinning, the pool, and calendar all work without it.
+              </p>
+            </div>
+          ) : waStatus === "connected" ? (
+            <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
+              <p className="text-sm text-ink font-semibold">✅ Linked{wa?.phone ? ` as ${wa.phone}` : ""}</p>
+              <p className="text-xs text-muted mt-1">Reminders can send. The link self-heals if it briefly drops.</p>
+            </div>
+          ) : waStatus === "qr" ? (
+            <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
+              <p className="text-sm text-ink font-semibold">Scan the QR to link WhatsApp</p>
+              <p className="text-xs text-muted mt-1">Open WhatsApp → Linked devices → Link a device, then scan below.</p>
+            </div>
+          ) : waStatus === "connecting" ? (
+            <div className="rounded-lg border border-line bg-panel-2 p-3">
+              <p className="text-sm text-ink font-semibold">Connecting…</p>
+              <p className="text-xs text-muted mt-1">Hang on — a QR will appear if a phone needs to re-link.</p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-card-red/40 bg-card-red/10 p-3">
+              <p className="text-sm text-ink font-semibold">
+                {wa?.hasPhone ? "🔌 WhatsApp isn't linked right now" : "WhatsApp isn't linked yet"}
+              </p>
+              <p className="text-xs text-muted mt-1">
+                {wa?.hasPhone
+                  ? "The link dropped. Tap “Save & link WhatsApp” and scan the QR to keep reminders flowing."
+                  : "Add a recipient number and tap “Save & link WhatsApp”, then scan the QR to enable reminders."}
+              </p>
+            </div>
+          )}
 
           {/* One-time activation checklist — all three are required before the
               reminder toggle above unlocks. */}
@@ -318,8 +367,8 @@ export function SettingsDialog({
                   + Add another
                 </button>
               )}
-              <button className="ml-auto rounded-md bg-panel-3 border border-line px-3 py-1.5 text-sm hover:border-accent" onClick={saveRecipients} disabled={busy}>
-                Save numbers
+              <button className="ml-auto btn-yellow !py-1.5 !px-4 !text-sm" onClick={saveAndLink} disabled={busy}>
+                Save & link WhatsApp
               </button>
             </div>
             <p className="text-faint text-xs mt-1">Pick the country (the +prefix) and enter the rest of the number.</p>

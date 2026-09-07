@@ -4,7 +4,7 @@ import { env } from "../../platform/config/env.js";
 import { publish } from "../../platform/realtime/bus.js";
 import { FixtureAdapter, type WhatsAppAdapter, type WAStatus } from "./adapter.js";
 import { handleInbound } from "./commands.js";
-import { flushOutbox } from "./outbox.js";
+import { flushOutbox, reconcileOutbox } from "./outbox.js";
 
 const adapters = new Map<string, WhatsAppAdapter>();
 
@@ -88,7 +88,11 @@ export async function getActivation(coupleId: string): Promise<Activation> {
     prisma.whatsAppSession.findUnique({ where: { coupleId } }),
     prisma.calendarConfig.findUnique({ where: { coupleId } }),
   ]);
-  const hasPhone = !!config && safeArr(config.recipients).length > 0;
+  // In group mode a configured group id is the "recipient"; otherwise we need at
+  // least one individual number. Either satisfies the phone half of activation.
+  const hasPhone =
+    !!config &&
+    (config.deliveryMode === "group" ? !!config.groupId : safeArr(config.recipients).length > 0);
   const linked = session?.status === "connected";
   const hasEmail = !!calendar && safeArr(calendar.emails).length > 0;
   return { hasPhone, linked, hasEmail, activated: hasPhone && linked && hasEmail };
@@ -153,5 +157,28 @@ export async function updateConfig(
 export async function flush(coupleId: string): Promise<void> {
   const a = await getAdapter(coupleId);
   if (a.status() !== "connected") return; // don't try to send while unpaired
-  await flushOutbox(a);
+  // reconcile (not plain flush) so any stranded uncertain/failed rows get another
+  // attempt alongside the new pending ones.
+  await reconcileOutbox(a);
+}
+
+/**
+ * Periodic self-heal, called each worker tick. For every couple whose stored
+ * session says "connected", make sure the live adapter really is connected —
+ * reconnect if it drifted (a crash, or a socket whose backoff was exhausted) —
+ * and reconcile its outbox so stragglers eventually send. This is the recovery
+ * path the boot-time reconnect can't provide on its own.
+ */
+export async function healConnections(): Promise<void> {
+  if (!env.WHATSAPP_ENABLED) return;
+  const sessions = await prisma.whatsAppSession.findMany({ where: { status: "connected" } });
+  for (const s of sessions) {
+    try {
+      const a = await getAdapter(s.coupleId);
+      if (a.status() !== "connected") await a.connect();
+      else await reconcileOutbox(a);
+    } catch (err) {
+      logger.warn({ err: String(err), coupleId: s.coupleId }, "WhatsApp heal failed");
+    }
+  }
 }

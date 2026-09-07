@@ -35,8 +35,33 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
   private statusCb: ((s: WAStatus, phone?: string) => void) | null = null;
   private closing = false;
   private normalizeJid: (jid: string) => string = (jid) => jid;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(public readonly coupleId: string) {}
+
+  /**
+   * Schedule a reconnect with capped exponential backoff + jitter. Baileys drops
+   * the socket on its own (network flaps, server-side resets); reconnecting
+   * back-to-back with no delay would hammer WhatsApp and risk a rate-limit/ban,
+   * and giving up after a single failed attempt would leave the couple silently
+   * dark. The worker's periodic heal is the long-run backstop; this keeps a
+   * transient drop recovering quickly without a tight loop.
+   */
+  private scheduleReconnect() {
+    if (this.closing || this.reconnectTimer) return;
+    const attempt = Math.min(this.reconnectAttempts++, 6);
+    const base = Math.min(30_000, 1000 * 2 ** attempt); // 1s,2s,4s… capped at 30s
+    const delay = base / 2 + Math.random() * (base / 2); // ±50% jitter
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closing) return;
+      this.connect().catch((err) => {
+        logger.error({ err: String(err) }, "WhatsApp (baileys) reconnect attempt failed");
+        this.scheduleReconnect();
+      });
+    }, delay);
+  }
 
   status(): WAStatus {
     return this._status;
@@ -99,6 +124,7 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
       if (connection === "connecting") this.setStatus("connecting");
       if (connection === "open") {
         this._qr = null;
+        this.reconnectAttempts = 0; // healthy link — reset backoff
         const raw = sock.user?.id as string | undefined;
         const phone = raw ? this.normalizeJid(raw).replace(/@.*/, "") : undefined;
         this.setStatus("connected", phone);
@@ -108,16 +134,13 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
         const loggedOut = code === DisconnectReason?.loggedOut;
         this.sock = null;
         if (this.closing || loggedOut) {
+          // Deliberate close, or the phone unlinked us — don't fight it.
           this.setStatus("disconnected");
         } else {
-          // Transient drop — resume the persisted session (no re-scan).
+          // Transient drop — resume the persisted session (no re-scan) on a
+          // backoff so repeated flaps don't hammer WhatsApp.
           this.setStatus("connecting");
-          try {
-            await this.connect();
-          } catch (err) {
-            logger.error({ err: String(err) }, "WhatsApp (baileys) reconnect failed");
-            this.setStatus("disconnected");
-          }
+          this.scheduleReconnect();
         }
       }
     });
@@ -171,6 +194,10 @@ export class BaileysWhatsAppAdapter implements WhatsAppAdapter {
 
   async disconnect(): Promise<void> {
     this.closing = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     try {
       // end() closes the socket but KEEPS credentials on disk, so a later
       // connect() resumes without a new QR. (logout() would unlink the phone.)

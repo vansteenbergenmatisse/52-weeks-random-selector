@@ -151,6 +151,13 @@ export async function tick(now: Date = new Date()): Promise<void> {
       logger.error({ err: String(err), collectionId: collection.id }, "Worker tick error for collection");
     }
   }
+
+  // Keep paired WhatsApp sessions alive and drain any stranded outbox rows.
+  try {
+    await whatsapp.healConnections();
+  } catch (err) {
+    logger.error({ err: String(err) }, "WhatsApp heal failed");
+  }
 }
 
 /**
