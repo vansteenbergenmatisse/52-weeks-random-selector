@@ -93,7 +93,7 @@ theme (sunset/berry tones, no blue) with a per-person accent colour.
 **Status: LIVE on Railway, running, tested.** 85 server tests pass; web build + server
 typecheck are green. **Live URL → https://52-weeks-random-selector-production.up.railway.app**
 
-**Latest session (2026-09-07, branch `fix/bug-hunt-gate-and-whatsapp`):**
+**Earlier 2026-09-07 session (bug-hunt gate + passcode login + WhatsApp hardening; now on `main`):**
 - **Mandatory bug-review gate CLEARED.** The system-wide review (41 agents, adversarially
   verified) surfaced **29 confirmed findings (6 high / 13 med / 10 low)** — all fixed.
   Highlights: auto-select no longer permanently skips a week on an empty pool (claim-before-work
@@ -184,7 +184,7 @@ docker compose up --build  # app → http://localhost:8080
 | Movies    | **TMDB API** — instant (typeahead) search, browse/discover, posters, ratings, IMDb ids (**key set**) |
 | Places    | **OpenStreetMap** — Nominatim geocode + Overpass POI search for date discovery (**free, keyless**) |
 | Emoji     | Auto-pick for date ideas via Claude (optional key; keyword fallback) |
-| WhatsApp  | **Baileys** (unofficial, free, no browser) — **optional**, currently fixture; **opt-in**, gated behind activation |
+| WhatsApp  | **Baileys** (unofficial, free, no browser) — **optional**, **per-user linking** (each partner links their own phone) + **mutual cross-sent reminders**; currently fixture until `WHATSAPP_ENABLED=true` |
 | Calendar  | `.ics` invites emailed via **Resend** — **optional**, dormant until keyed |
 | Tests     | Vitest (unit/integration, real DB) |
 | Delivery  | Docker Compose (local); **Railway** via `railway.*.json` + Dockerfiles (see `docs/DEPLOY-RAILWAY.md`) |
@@ -284,10 +284,13 @@ Invariants & notable fields:
   `currentRevisionNumber` = optimistic lock for rerolls; **`calendarInvitedAt`** = calendar idempotency.
 - `ResultRevision` — **immutable snapshot** per draw/reroll (title/emoji/contributor/
   artwork/**location**/**imdbId**), so editing an entry never rewrites history.
-- `WhatsAppConfig` — delivery mode + recipient numbers (E.164, JSON array).
+- `WhatsAppSession @unique(userId)` — **per-user** link (each partner's own phone); keeps
+  `coupleId` (indexed) for scoping, `phone` = the paired device's own number, `status`, `lastQr`.
+- `WhatsAppConfig` — **dormant** (old delivery mode + recipient numbers); no longer read/written.
 - `CalendarConfig` — per couple: `enabled`, `emails` (JSON), `durationMins`.
 - `OutboundMessage` — WhatsApp outbox (kinds: result/reminder/reroll/test/**calendar_prompt**),
-  tracks `waMessageId` + status for reconciliation.
+  tracks `waMessageId` + status for reconciliation, plus **`senderUserId`** = whose linked
+  WhatsApp the row goes out FROM (cross-send).
 - `ProcessedInboundEvent @unique(eventKey)` — inbound dedup ledger.
 - `JobRun @unique(jobKey)` — worker idempotency (`select:<periodId>`, `notify:<periodId>`).
 
@@ -307,7 +310,16 @@ movie stay for a re-watch). Selected/completed entries are excluded from draws.
 **Pool is the source of truth:** a weekly result only shows if its pick is still a
 live pool entry — if the pick was removed, `getCurrentState`/`spin` treat the week as
 re-spinnable (spin discards the stale result and draws fresh), so an emptied pool never
-replays a "ghost" pick. History reads immutable snapshots, so it's untouched.
+replays a "ghost" pick. `spin` refuses an empty available pool (`eligibleEntryIds` is
+`status:"available"` only → throws, no ghost). History reads immutable snapshots, untouched.
+**Counts = available only:** `getProgress`/`availableCount` count `status:"available"`; the grid
+also shows `completed` "✓ Watched" cards and a `selected` pick shows on the roulette page, so
+visible items can exceed the count (by design, not a bug).
+**Reset to zero** (`selection.resetToZero`, `POST /api/collections/:id/reset`, 🧨 button in a
+collection's Settings): testing wipe of ONE collection — hard-deletes every entry (incl. current
+pick, completed, soft-deleted), deletes all `weeklyPeriod` (cascades results+revisions → clears
+history) and the collection's outbound rows, then restarts the cycle (`cycleIndex 0`, fresh
+`cycleStartDate`). Pool → truly 0, no pick shows. FK-safe (`ResultRevision.entryId` is SetNull).
 
 **Carousel** (`Carousel.tsx`): launches at full speed (long fixed runway) and eases
 out smoothly into the winner (`easeOutQuint`, ~7s). Winner is server-decided; odds
@@ -420,13 +432,14 @@ The test DB (`apps/server/prisma/test.db`) is created fresh each run by
 Core: `DATABASE_URL` (SQLite `file:` URL — `file:./dev.db` locally, `file:/data/our52.db`
 on a Railway Volume), `PORT, APP_BASE_URL, SESSION_SECRET, CORS_ORIGINS, DEMO_MODE,
 NODE_ENV, DEFAULT_TIMEZONE/WEEKDAY/TIME, WORKER_TICK_SECONDS, RUN_WORKER` (default true —
-inline worker), `VITE_API_BASE`.
+inline worker), `VITE_API_BASE`. `SEED_EXAMPLES` (default **false**) — set `true` to seed the
+12 demo dates / 12 demo movies; otherwise a fresh space starts **empty**.
 
 Integrations (all optional; features degrade gracefully):
 - `TMDB_API_KEY` — **SET** (v4 read-access token). Movie search/discover/posters/IMDb live.
 - `ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`, default Haiku 4.5) — **SET** → smart Excel movie matching + nicer auto-emojis. Unset → keyword-emoji + string-match fallback.
 - `RESEND_API_KEY` + `CALENDAR_FROM_EMAIL` — *not set* → calendar invites dormant.
-- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery). `WHATSAPP_SESSION_DIR` (Baileys multi-file auth). *(No Chrome path any more — Baileys needs no browser.)*
+- `WHATSAPP_ENABLED` — **false** → fixture adapter (no real delivery); set `true` for real per-user pairing. `WHATSAPP_SESSION_DIR` (Baileys multi-file auth, now **per-user** dirs `user-<userId>`; container default `/data/whatsapp`). *(No Chrome path — Baileys needs no browser.)*
 
 In production set a real `SESSION_SECRET`. **`DEMO_MODE=true` is intentionally ON in prod**
 (private shared space) so the one-tap Teresa/Matisse picker works; the demo gate is decoupled
@@ -439,13 +452,14 @@ optional (a strong random one is generated on first seed otherwise, never logged
 
 ## 9. Known gaps / what's NOT verified
 
-- **WhatsApp live pairing is the ONE unverified path.** The Baileys adapter now has capped
-  backoff+jitter reconnect, outbox reconciliation, and a per-tick `healConnections()` self-heal;
-  the container defaults `WHATSAPP_SESSION_DIR=/data/whatsapp` so creds persist on the Volume;
-  Settings has a live status banner + one-tap "Save & link WhatsApp". **Still unverified:** an
-  actual QR pairing/send with a real phone (needs `WHATSAPP_ENABLED=true` on the server and
-  someone to scan). Unofficial client — can still drop; the reconnect/heal logic is untested
-  against a live socket.
+- **WhatsApp live pairing is the ONE unverified path** — now **per-user**. Each partner links
+  their own phone (separate `WhatsAppSession`/QR/Baileys auth dir); reminders are **mutual and
+  cross-sent** and need BOTH linked. The adapter has capped backoff+jitter reconnect, outbox
+  reconciliation, and per-tick `healConnections()`; creds persist under `WHATSAPP_SESSION_DIR`
+  (`user-<id>`, container default `/data/whatsapp`). Settings shows "Your WhatsApp (just you)" +
+  partner status. **Still unverified:** actual QR pairing/send with real phones (needs
+  `WHATSAPP_ENABLED=true` and **each** partner to scan). Unofficial client — reconnect/heal
+  logic untested against a live socket.
 - **SMS is not implemented** (WhatsApp-only, by choice).
 - **Calendar (keyless) works with no keys** — the "Add to calendar" button downloads the `.ics`
   and offers a Google Calendar link (`getCurrentInvite`, tested). Only the **optional** email
@@ -456,6 +470,10 @@ optional (a strong random one is generated on first seed otherwise, never logged
   `DATABASE_URL=file:/data/our52.db`, and `SESSION_SECRET`/`APP_BASE_URL`/`CORS_ORIGINS`/keys
   set. Kept at **one replica** (SQLite + in-process live-sync). `start:prod` migrates + seeds
   on boot; verified live (`/api/health` 200, login + locked pick + shared space all work).
+  **⚠️ GitHub auto-deploy is NOT firing** — a `git push` alone does not redeploy. Deploy with
+  `railway up --detach --service 52-weeks-random-selector --environment production` (project
+  `extraordinary-strength`). To restore auto-deploy: reconnect the GitHub source in the Railway
+  service settings (dashboard toggle).
 - **Verified on the live deploy** ✅ — one-tap login, collections, spin → locked pick shown
   on login, inline worker, same-origin `/api` + SSE all work. Live WhatsApp pairing is the
   only remaining unverified core path (see the WhatsApp gap above).
@@ -471,29 +489,28 @@ optional (a strong random one is generated on first seed otherwise, never logged
 
 ### ✅ MANDATORY bug review — DONE
 The system-wide bug hunt ran (41 agents, adversarially verified) → **29 confirmed findings
-(6 high / 13 med / 10 low), all fixed** this session with 7 new regression tests. See the
-"Latest session" note in §1 for the highlight list.
+(6 high / 13 med / 10 low), all fixed** with 7 regression tests. See the bug-hunt-gate session
+note in §1 for the highlight list.
 
-### WhatsApp connection — items 2–4 DONE; item 1 needs a phone
-1. **Real connection (ONLY remaining step)** — set `WHATSAPP_ENABLED=true` on the server, open
-   Settings → "Save & link WhatsApp" (**no recipient number needed** now), scan the QR with the
-   phone, then tap "Send test message" to confirm a live send to the linked phone. Creds persist
-   under `WHATSAPP_SESSION_DIR=/data/whatsapp` (container default) across redeploys. This can't be
-   verified without a phone.
-2. ✅ **Automatic disconnects** — capped exponential backoff + jitter reconnect in
-   `baileysAdapter`; keeps retrying after a failed attempt. Per-tick `healConnections()` reconnects
-   any drifted session and drains the outbox (`reconcileOutbox`).
-3. ✅ **Reconnect prompt** — Settings shows a live banner (off / linked / scan-QR / connecting /
-   dropped→reconnect). **Scope is reminders-only**: spin, pool, calendar all keep working without
-   WhatsApp; the reminder toggle stays gated behind an active connection.
-4. ✅ **Activation flow** — one-tap **"Save & link WhatsApp"** saves numbers + calendar emails,
-   then immediately starts the connection and surfaces the QR; reminders unlock once linked.
+### WhatsApp connection — code DONE (per-user); real pairing needs phones
+1. **Real connection (ONLY remaining step)** — set `WHATSAPP_ENABLED=true` on the server. Then
+   **each partner** logs in → Settings → **"Link my WhatsApp"** → scans the QR on their own phone.
+   Once BOTH show linked, "Send test message" goes to the partner (mutual reminders unlock). Creds
+   persist per user under `WHATSAPP_SESSION_DIR` (`user-<id>`) across redeploys. Can't verify
+   without two phones.
+2. ✅ **Per-user linking + mutual cross-send** — each partner links their own phone; the weekly
+   pick each receives is sent FROM the other's WhatsApp. No recipient field. Both must be linked.
+3. ✅ **Automatic disconnects** — capped exponential backoff + jitter reconnect in `baileysAdapter`;
+   per-tick `healConnections()` reconnects any drifted user session and drains their outbox.
+4. ✅ **Settings UI** — "Your WhatsApp (just you)": Link/Unlink your phone, your QR, a live banner,
+   and a read-only partner status line. Reminders gated on both linked.
 
 ### Later / optional
 5. (Optional) Add `RESEND_API_KEY` + both emails → verify the *emailed* calendar invite lands.
    Not required for calendar: the keyless "Add to calendar" button (download + Google link) works
    with no keys.
-6. `docker compose up --build` smoke test (validates the local two-service compose path).
+6. ✅ `docker compose up --build` smoke test — ran this session; both containers up, API 200,
+   web 200, nginx `/api` proxy 200. Validates the local two-service compose path.
 7. Custom collections UI (backend supports them; add a "＋ New collection" tab entry).
 8. Import personal IMDb ratings via CSV; multi-instance realtime (swap in-process bus for
    Postgres LISTEN/NOTIFY or Redis) only if scaling past one process.
