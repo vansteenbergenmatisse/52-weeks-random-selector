@@ -68,6 +68,27 @@ export async function resultRoutes(app: FastifyInstance) {
     return reply.send({ replaced: res.replaced, reason: res.reason, state: res.state });
   });
 
+  // Skip this week's pick: it returns to the pool and a new one is drawn.
+  app.post("/api/collections/:collectionId/skip", async (req, reply) => {
+    const { coupleId, user } = await requireCouple(req);
+    const { collectionId } = req.params as { collectionId: string };
+    const res = await selection.skip(coupleId, collectionId, { userId: user.id, source: "web" });
+    if (res.skipped && res.state.result) {
+      const meta = await collectionMeta(collectionId);
+      await enqueue({
+        coupleId,
+        kind: "result",
+        collectionId,
+        weeklyResultId: res.state.result.weeklyResultId,
+        revisionNumber: res.state.result.revision,
+        body: formatResultMessage(res.state, meta),
+      });
+      await calendar.enqueueCalendarPromptIfConfigured(coupleId, meta, res.state);
+      whatsapp.flush(coupleId).catch(() => {});
+    }
+    return reply.send({ skipped: res.skipped, reason: res.reason, state: res.state });
+  });
+
   app.post("/api/collections/:collectionId/complete", async (req, reply) => {
     const { coupleId } = await requireCouple(req);
     const { collectionId } = req.params as { collectionId: string };

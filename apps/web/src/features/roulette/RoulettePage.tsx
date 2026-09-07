@@ -17,6 +17,7 @@ import {
   useComplete,
   useEntries,
   useResult,
+  useSkip,
   useSpin,
 } from "./hooks";
 import type { Collection } from "../../shared/types";
@@ -147,6 +148,7 @@ function CollectionView({
 
   const navigate = useNavigate();
   const spin = useSpin(collection.id);
+  const skip = useSkip(collection.id);
   const complete = useComplete(collection.id);
   const addCalendar = useAddToCalendar(collection.id);
 
@@ -233,6 +235,18 @@ function CollectionView({
   function onSettled() {
     if (resultId) setRevealedIds((s) => new Set(s).add(resultId));
     setPhase("settled");
+  }
+
+  async function onSkip() {
+    setCalendarNote(null);
+    const res = await skip.mutateAsync();
+    if (res.skipped) {
+      // Animate the reel to the freshly-drawn pick.
+      setPhase("spinning");
+      setSpinToken((t) => t + 1);
+    } else if (res.reason === "no_alternative") {
+      setCalendarNote("Nothing else in the pool to skip to — add more ideas first.");
+    }
   }
 
   async function onAddToCalendar() {
@@ -326,6 +340,8 @@ function CollectionView({
               state={state}
               collection={collection}
               onComplete={() => complete.mutate()}
+              onSkip={onSkip}
+              skipping={skip.isPending}
               onAddToCalendar={onAddToCalendar}
               addingToCalendar={addCalendar.isPending}
               calendarNote={calendarNote}

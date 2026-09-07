@@ -5,6 +5,35 @@
 
 ---
 
+## 0. ACTIVE TODO (2026-09-07) — honest status
+
+Corrections after the last session over-claimed. **WhatsApp was NOT actually working** — the
+code was hardened but prod ran the *fixture* adapter (`WHATSAPP_ENABLED` unset → false), so
+"Connect" faked a link and no QR ever appeared. Verified locally that the Baileys QR path DOES
+produce a real scannable QR (7KB PNG data URL), so the blocker is purely the flag + a live scan.
+
+Work in this session (all ✅ done in code; WhatsApp needs the flag flipped + a live scan):
+
+1. ✅ **[WhatsApp] Make it actually link.** Library stays **Baileys** (`baileys@7.0.0-rc14`, free,
+   no Chromium — confirmed emits a real QR). Set `WHATSAPP_ENABLED=true` +
+   `WHATSAPP_SESSION_DIR=/data/whatsapp` on Railway so the real adapter runs. Then Settings →
+   "Save & link WhatsApp" shows a **real QR** to scan (WhatsApp → Linked devices → Link a device).
+   Stop the UI/banner from ever implying "connected" when it isn't. Still can't fully verify the
+   scan+pair without the phone, but the QR now appears.
+2. ✅ **[Login] Show-password toggle** on the login page (space passcode + password fields).
+3. ✅ **[Selection] Skip button on every pick (dates & movies).** `selection.skip()` returns the
+   skipped idea/movie to the pool (status → available, reusable in future weeks) and draws a new
+   pick excluding it; new `ResultRevision` (reason `skip`). `POST /skip` route + `useSkip` +
+   ⏭️ Skip button in ResultPanel (animates the reel to the new pick). Replaces the old
+   "pick is LOCKED / reroll disabled" rule.
+4. ✅ **[Selection] Spin reliability.** Carousel now starts the animation the moment the winner is
+   known (keyed on `winner?.id` with a `lastSpunToken` guard) so a lagging winner can't leave the
+   reel frozen; always settles.
+
+---
+
+---
+
 ## 1. What this is
 
 **Our 52** is a private **couples activity roulette**. Each couple has a shared,
@@ -34,11 +63,10 @@ typecheck are green. **Live URL → https://52-weeks-random-selector-production.
   password is env/random and never logged; `SPACE_PASSCODE` gates the picker on the public URL;
   demo sessions are revoked the instant `DEMO_MODE` flips off. `acceptInvitation` refuses a user
   already in another couple (no burned slot).
-- **WhatsApp connection HARDENED (§10 items 2–4).** Reconnect with capped backoff+jitter;
-  `reconcileOutbox` re-queues stranded uncertain/failed sends; worker `healConnections()`
-  self-heals drifted sessions each tick; group-mode activation/authorization. Settings shows a
-  LIVE connection banner + a one-tap **"Save & link WhatsApp"** (save details → connect → QR).
-  **Only unverified step: real phone QR pairing** (needs `WHATSAPP_ENABLED=true` + a phone).
+- **WhatsApp connection code hardened (§10 items 2–4)** — reconnect backoff, outbox
+  reconciliation, self-heal, group activation, live banner, "Save & link" flow. **BUT it was
+  still running the fixture adapter in prod (`WHATSAPP_ENABLED` unset), so it never actually
+  linked.** See §0 — enabling the flag + real QR is this session's fix.
 
 **Earlier session (2026-09-06, on `main`):**
 - **Deployed to Railway as ONE service** — the Fastify API now serves the built web app as
@@ -223,10 +251,12 @@ Invariants & notable fields:
 ## 6. Core behaviours (the subtle parts)
 
 **Selection** (`features/selection/service.ts`): server picks + persists the winner
-**before** the client animates; uniform `crypto.randomInt`. **One spin per week — the pick
-is LOCKED once decided** (first spin or the Sunday auto-spin); concurrent spins converge on
-ONE result via `unique(periodId)`, and `reroll()` is a **no-op returning `reason:"locked"`**
-(reroll is disabled for both web and WhatsApp 🔄). `markCompleted` sets `completedAt` **and**
+**before** the client animates; uniform `crypto.randomInt`. Whoever spins first (or the Sunday
+auto-spin) decides the week; concurrent spins converge on ONE result via `unique(periodId)`.
+**A pick can be SKIPPED** (`selection.skip()`, `POST /skip`, ⏭️ button): the skipped entry goes
+back to the pool (status → available) and a new winner is drawn excluding it, recorded as a new
+`ResultRevision` (reason `skip`). `reroll()` remains a legacy no-op (`reason:"locked"`); skip is
+the supported path. `markCompleted` sets `completedAt` **and**
 flips the picked entry to `completed` (**only that copy** — other copies of the same
 movie stay for a re-watch). Selected/completed entries are excluded from draws.
 **Pool is the source of truth:** a weekly result only shows if its pick is still a

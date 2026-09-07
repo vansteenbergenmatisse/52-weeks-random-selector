@@ -93,6 +93,24 @@ export function useSpin(collectionId: string) {
   });
 }
 
+export function useSkip(collectionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ skipped: boolean; reason?: string; state: CurrentState }>(
+        `/api/collections/${collectionId}/skip`,
+      ),
+    onSuccess: (data) => {
+      // Seed the new pick synchronously (same reason as useSpin) so the carousel
+      // can animate straight to it without a null-winner race.
+      qc.setQueryData(["result", collectionId], { state: data.state });
+      qc.invalidateQueries({ queryKey: ["result", collectionId] });
+      qc.invalidateQueries({ queryKey: ["entries", collectionId] });
+      qc.invalidateQueries({ queryKey: ["collections"] });
+    },
+  });
+}
+
 export interface BulkImportItem {
   title: string;
   description?: string | null;

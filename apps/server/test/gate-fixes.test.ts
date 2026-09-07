@@ -108,6 +108,33 @@ describe("bug-hunt gate regressions", () => {
     }
   });
 
+  it("skip returns the pick to the pool and lands on a different one", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
+    const { state } = await selection.spin(couple.id, dates.id, { userId: a.id });
+    const firstId = state.result!.entryId!;
+
+    const res = await selection.skip(couple.id, dates.id, { userId: a.id });
+    expect(res.skipped).toBe(true);
+    expect(res.state.result!.entryId).not.toBe(firstId);
+    // The skipped idea is back in the pool for future weeks.
+    const skipped = await prisma.entry.findUniqueOrThrow({ where: { id: firstId } });
+    expect(skipped.status).toBe("available");
+    // The new pick is the one now marked selected.
+    const newPick = await prisma.entry.findUniqueOrThrow({ where: { id: res.state.result!.entryId! } });
+    expect(newPick.status).toBe("selected");
+  });
+
+  it("skip with only one idea has nothing to skip to (pick unchanged)", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["Only"]);
+    const { state } = await selection.spin(couple.id, dates.id, { userId: a.id });
+    const res = await selection.skip(couple.id, dates.id, { userId: a.id });
+    expect(res.skipped).toBe(false);
+    expect(res.reason).toBe("no_alternative");
+    expect(res.state.result!.entryId).toBe(state.result!.entryId);
+  });
+
   it("buildIcs folds long content lines to <=75 octets (RFC 5545)", () => {
     const longDesc = "A wonderfully long description ".repeat(8).trim();
     const ics = buildIcs({

@@ -4,6 +4,48 @@ import { api, ApiError } from "../../platform/api/client";
 import { useAuth } from "./useAuth";
 import { Wordmark } from "../../components/ui/Wordmark";
 
+/** A password/passcode input with a show/hide eye toggle. */
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  className = "",
+  autoComplete,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+  className?: string;
+  autoComplete?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className={`relative ${className}`}>
+      <input
+        className="field pr-11"
+        type={show ? "text" : "password"}
+        placeholder={placeholder}
+        value={value}
+        autoCapitalize="none"
+        autoComplete={autoComplete}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={ariaLabel}
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide" : "Show"}
+        title={show ? "Hide" : "Show"}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-base"
+      >
+        {show ? "🙈" : "👁️"}
+      </button>
+    </div>
+  );
+}
+
 /** One person in the shared space — tap to enter as them. */
 function PersonCard({
   user,
@@ -108,14 +150,13 @@ export function AuthPage() {
                 Tap in — everything you both add stays in the same space, in sync.
               </p>
               {spaceLocked && (
-                <input
-                  className="field mb-3"
-                  type="password"
+                <SecretInput
+                  className="mb-3"
                   placeholder="Space passcode"
                   value={passcode}
+                  onChange={setPasscode}
+                  ariaLabel="Space passcode"
                   autoComplete="off"
-                  onChange={(e) => setPasscode(e.target.value)}
-                  aria-label="Space passcode"
                 />
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -153,13 +194,12 @@ export function AuthPage() {
                   onChange={(e) => setUsername(e.target.value)}
                   aria-label="Username"
                 />
-                <input
-                  className="field"
-                  type="password"
+                <SecretInput
                   placeholder="Password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-label="Password"
+                  onChange={setPassword}
+                  ariaLabel="Password"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
                 />
                 {mode === "register" && (
                   <>

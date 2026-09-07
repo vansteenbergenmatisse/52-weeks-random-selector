@@ -71,6 +71,10 @@ export function Carousel({
   const winnerIndexRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const lastTickAngle = useRef(0);
+  // The spin token we last animated. Lets us start a spin the moment the winner
+  // becomes known even if it was still null when the token changed (the cause of
+  // the reel occasionally never moving), without ever double-triggering.
+  const lastSpunToken = useRef(0);
 
   // Build an idle reel when the pool changes and we aren't mid-spin.
   useEffect(() => {
@@ -87,9 +91,12 @@ export function Carousel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pool, phase === "spinning" ? "spin" : "static", winner?.id]);
 
-  // Trigger a spin when spinToken changes.
+  // Trigger a spin when spinToken changes — or as soon as the winner arrives if
+  // it lagged behind the token bump.
   useEffect(() => {
     if (spinToken === 0 || !winner) return;
+    if (spinToken === lastSpunToken.current) return; // already animated this spin
+    lastSpunToken.current = spinToken;
     const base = pool.length ? pool.filter((p) => p.id !== winner.id) : PLACEHOLDER;
     // Long runway so the reel visibly races across the whole pool many times
     // before decelerating into the winner (CS:GO-style long spin).
@@ -140,7 +147,7 @@ export function Carousel({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spinToken]);
+  }, [spinToken, winner?.id]);
 
   const visible = useMemo(() => {
     const items: Array<{ item: ReelItem; theta: number; key: number }> = [];

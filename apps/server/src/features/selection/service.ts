@@ -187,6 +187,71 @@ export async function reroll(
   return { replaced: false, reason: "locked", state: await getCurrentState(coupleId, collectionId) };
 }
 
+/**
+ * Skip this week's pick: return the skipped idea/movie to the pool (so it can be
+ * chosen again another week) and draw a NEW winner from the rest, excluding the
+ * one just skipped. This is the couples-requested replacement for the old
+ * "pick is locked" rule. Returns `skipped:false, reason:"no_alternative"` when
+ * the skipped pick is the only thing in the pool (nothing else to land on).
+ */
+export async function skip(
+  coupleId: string,
+  collectionId: string,
+  opts: { userId?: string; source?: SelectionSource } = {},
+): Promise<{ skipped: boolean; reason?: string; state: CurrentState }> {
+  await assertCollectionInCouple(collectionId, coupleId);
+  const period = await ensureCurrentPeriod(collectionId);
+  const { result, pick, pickLive } = await loadCurrentResult(period.id);
+  if (!result || !pick) throw Errors.conflict("There's no pick to skip yet");
+  if (!pickLive) throw Errors.conflict("This week's pick was removed — spin again");
+  const skippedEntryId = pick.entryId;
+
+  try {
+    const outcome = await prisma.$transaction(async (tx) => {
+      const exclude = new Set<string>(skippedEntryId ? [skippedEntryId] : []);
+      const chosenId = pickRandom(await eligibleEntryIds(tx, collectionId, exclude));
+      if (!chosenId) return { skipped: false as const, reason: "no_alternative" };
+
+      // Return the skipped pick to the pool (reusable in future weeks).
+      if (skippedEntryId) {
+        await tx.entry.update({ where: { id: skippedEntryId }, data: { status: "available" } });
+      }
+      const entry = await tx.entry.findUniqueOrThrow({
+        where: { id: chosenId },
+        include: { contributor: true },
+      });
+      const nextRev = result.currentRevisionNumber + 1;
+      await tx.weeklyResult.update({
+        where: { id: result.id },
+        data: { currentRevisionNumber: nextRev },
+      });
+      await tx.resultRevision.create({
+        data: {
+          weeklyResultId: result.id,
+          revisionNumber: nextRev,
+          entryId: entry.id,
+          source: opts.source ?? "web",
+          reason: "skip",
+          createdByUserId: opts.userId ?? null,
+          ...snapshotData(entry),
+        },
+      });
+      await tx.entry.update({ where: { id: entry.id }, data: { status: "selected" } });
+      return { skipped: true as const };
+    });
+
+    publish({ type: "result.changed", coupleId, collectionId });
+    publish({ type: "entries.changed", coupleId, collectionId });
+    return { ...outcome, state: await getCurrentState(coupleId, collectionId) };
+  } catch (e) {
+    // A concurrent skip already advanced the revision — reveal the latest.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return { skipped: false, reason: "already_skipped", state: await getCurrentState(coupleId, collectionId) };
+    }
+    throw e;
+  }
+}
+
 export async function markCompleted(coupleId: string, collectionId: string) {
   await assertCollectionInCouple(collectionId, coupleId);
   const period = await ensureCurrentPeriod(collectionId);
