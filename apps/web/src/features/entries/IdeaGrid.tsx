@@ -23,7 +23,7 @@ export function IdeaGrid({
 }) {
   const isMovie = collection.kind === "movies";
   const available = entries.filter((e) => e.status === "available");
-  // Watched/done ideas stay listed so either partner can still remove them —
+  // Watched/done ideas stay listed so their owner can still remove them —
   // otherwise a completed pick lingers invisibly and can resurface as a ghost.
   const watched = entries.filter((e) => e.status === "completed");
 
@@ -137,9 +137,9 @@ function IdeaCard({
           </a>
         )}
       </div>
-      {/* Delete is available on any card (either partner can remove a watched
-          movie); editing stays limited to your own, available ideas. Buttons
-          are always visible so they work on touch too. */}
+      {/* Owner-only: you can delete only your own ideas (editing too, and only
+          while available). Your partner's cards are read-only to you. Buttons are
+          always visible so they work on touch too. */}
       <div className="absolute top-1 right-1 flex gap-1">
         {mine && !watched && (
           <button
@@ -150,13 +150,15 @@ function IdeaCard({
             ✏️
           </button>
         )}
-        <button
-          onClick={() => onDelete(e)}
-          className="h-6 w-6 grid place-items-center rounded bg-black/50 text-xs hover:bg-black/80 transition"
-          aria-label={`Delete ${e.title}`}
-        >
-          🗑️
-        </button>
+        {mine && (
+          <button
+            onClick={() => onDelete(e)}
+            className="h-6 w-6 grid place-items-center rounded bg-black/50 text-xs hover:bg-black/80 transition"
+            aria-label={`Delete ${e.title}`}
+          >
+            🗑️
+          </button>
+        )}
       </div>
     </div>
   );

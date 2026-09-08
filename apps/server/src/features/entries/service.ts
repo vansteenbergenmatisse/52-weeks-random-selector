@@ -313,18 +313,21 @@ export async function suggestEmojis(titles: string[]): Promise<string[]> {
   return pickEmojis(clean);
 }
 
-export async function deleteEntry(coupleId: string, entryId: string) {
-  // Either partner can remove any movie/idea from the shared pool (e.g. "we
-  // watched it, take it out"). Soft delete preserves historical snapshots.
+export async function deleteEntry(coupleId: string, entryId: string, userId: string) {
+  // Owner-only: each partner can remove ONLY the ideas they added; the other's
+  // entries are read-only to you. Soft delete preserves historical snapshots.
   const e = await coupleEntry(entryId, coupleId);
+  if (e.contributorId !== userId) throw Errors.forbidden("You can only delete your own ideas");
   await prisma.entry.update({ where: { id: e.id }, data: { deletedAt: new Date() } });
   publish({ type: "entries.changed", coupleId, collectionId: e.collectionId });
   return { ok: true };
 }
 
-export async function restoreEntry(coupleId: string, entryId: string) {
+export async function restoreEntry(coupleId: string, entryId: string, userId: string) {
   // Undo a delete — clears the soft-delete flag so the entry returns to the pool.
+  // Owner-only, mirroring deleteEntry (you only ever undo your own removal).
   const e = await coupleEntry(entryId, coupleId);
+  if (e.contributorId !== userId) throw Errors.forbidden("You can only restore your own ideas");
   // Guard the "one copy per film" invariant: while this entry was deleted the
   // same movie may have been re-added, so restoring it would put two live copies
   // of the same tmdbId in the pool (there's no DB unique constraint on it).

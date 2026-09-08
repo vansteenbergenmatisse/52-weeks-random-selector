@@ -93,7 +93,7 @@ describe("selection", () => {
     expect(spun.state.hasResult).toBe(true);
 
     // Remove the only idea (which is this week's pick). Pool is now empty.
-    await deleteEntry(couple.id, spun.state.result!.entryId!);
+    await deleteEntry(couple.id, spun.state.result!.entryId!, a.id);
 
     const state = await selection.getCurrentState(couple.id, dates.id);
     expect(state.hasResult).toBe(false); // no ghost pick
@@ -107,7 +107,7 @@ describe("selection", () => {
     await addEntries(dates.id, a.id, ["One", "Two"]);
     const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
     const removed = spun.state.result!.title;
-    await deleteEntry(couple.id, spun.state.result!.entryId!);
+    await deleteEntry(couple.id, spun.state.result!.entryId!, a.id);
 
     // The stale result is discarded and a new winner is drawn from what's left.
     const again = await selection.spin(couple.id, dates.id, { userId: a.id });

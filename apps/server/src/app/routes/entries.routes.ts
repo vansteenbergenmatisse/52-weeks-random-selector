@@ -66,14 +66,14 @@ export async function entryRoutes(app: FastifyInstance) {
   });
 
   app.delete("/api/entries/:id", async (req, reply) => {
-    const { coupleId } = await requireCouple(req);
+    const { coupleId, user } = await requireCouple(req);
     const { id } = req.params as { id: string };
-    return reply.send(await entries.deleteEntry(coupleId, id));
+    return reply.send(await entries.deleteEntry(coupleId, id, user.id));
   });
 
   app.post("/api/entries/:id/restore", async (req, reply) => {
-    const { coupleId } = await requireCouple(req);
+    const { coupleId, user } = await requireCouple(req);
     const { id } = req.params as { id: string };
-    return reply.send(await entries.restoreEntry(coupleId, id));
+    return reply.send(await entries.restoreEntry(coupleId, id, user.id));
   });
 }

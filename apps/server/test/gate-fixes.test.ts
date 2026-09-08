@@ -40,7 +40,7 @@ describe("bug-hunt gate regressions", () => {
     const entryId = state.result!.entryId!;
 
     // Remove the picked entry — the result becomes a ghost.
-    await entries.deleteEntry(couple.id, entryId);
+    await entries.deleteEntry(couple.id, entryId, a.id);
 
     await expect(selection.markCompleted(couple.id, dates.id)).rejects.toThrow();
     // The (deleted) entry must NOT have been flipped to completed.
@@ -53,12 +53,12 @@ describe("bug-hunt gate regressions", () => {
     const m1 = await prisma.entry.create({
       data: { collectionId: movies.id, contributorId: a.id, title: "Dune", tmdbId: 438631 },
     });
-    await entries.deleteEntry(couple.id, m1.id);
+    await entries.deleteEntry(couple.id, m1.id, a.id);
     // Re-added while the first copy sits soft-deleted.
     await prisma.entry.create({
       data: { collectionId: movies.id, contributorId: a.id, title: "Dune", tmdbId: 438631 },
     });
-    await expect(entries.restoreEntry(couple.id, m1.id)).rejects.toThrow();
+    await expect(entries.restoreEntry(couple.id, m1.id, a.id)).rejects.toThrow();
   });
 
   it("updateEntry refuses to change a movie's tmdbId onto one already in the pool", async () => {
