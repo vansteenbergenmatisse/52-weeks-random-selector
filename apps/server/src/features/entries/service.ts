@@ -302,6 +302,17 @@ export async function updateEntry(
   return publicEntry(updated);
 }
 
+/**
+ * Suggest an emoji per title (date ideas), so the import preview can SHOW the
+ * emoji that will be used and let the user tweak it before saving. Same batch
+ * Claude call as bulk import; degrades to keyword emojis (never throws).
+ */
+export async function suggestEmojis(titles: string[]): Promise<string[]> {
+  const clean = titles.map((t) => (t ?? "").trim()).filter((t) => t.length > 0);
+  if (clean.length === 0) return [];
+  return pickEmojis(clean);
+}
+
 export async function deleteEntry(coupleId: string, entryId: string) {
   // Either partner can remove any movie/idea from the shared pool (e.g. "we
   // watched it, take it out"). Soft delete preserves historical snapshots.

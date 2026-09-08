@@ -42,6 +42,22 @@ export async function entryRoutes(app: FastifyInstance) {
     return reply.send(await entries.createEntriesBulk(coupleId, collectionId, user.id, body.items));
   });
 
+  // Suggest emojis for a batch of date-idea titles (used by the import preview so
+  // the auto-picked emoji is visible and editable before saving). LLM-backed but
+  // fail-safe: pickEmojis has a timeout and degrades to keyword emojis.
+  app.post(
+    "/api/entries/suggest-emojis",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (req, reply) => {
+      await requireCouple(req);
+      const body = parse(
+        z.object({ titles: z.array(z.string().min(1).max(120)).min(1).max(200) }),
+        req.body,
+      );
+      return reply.send({ emojis: await entries.suggestEmojis(body.titles) });
+    },
+  );
+
   app.patch("/api/entries/:id", async (req, reply) => {
     const { coupleId, user } = await requireCouple(req);
     const { id } = req.params as { id: string };

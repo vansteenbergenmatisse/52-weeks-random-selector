@@ -145,6 +145,7 @@ export function ImportDialog({
   const [rows, setRows] = useState<BulkImportItem[]>([]);
   const [review, setReview] = useState<ReviewRow[] | null>(null); // movie imports only
   const [matching, setMatching] = useState(false);
+  const [preparing, setPreparing] = useState(false); // date imports: fetching auto emojis
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<number | null>(null);
@@ -153,6 +154,7 @@ export function ImportDialog({
     setRows([]);
     setReview(null);
     setMatching(false);
+    setPreparing(false);
     setFileName(null);
     setError(null);
     setDone(null);
@@ -188,6 +190,37 @@ export function ImportDialog({
     }
   }
 
+  /** Date imports: fill each row's emoji up-front (auto-pick where the sheet had
+   *  none) so the preview shows the emoji that will be used and it can be edited. */
+  async function fillDateEmojis(parsed: BulkImportItem[]) {
+    const needIdx = parsed.map((r, i) => (r.emoji ? -1 : i)).filter((i) => i >= 0);
+    if (needIdx.length === 0) {
+      setRows(parsed);
+      return;
+    }
+    setPreparing(true);
+    try {
+      const titles = needIdx.map((i) => parsed[i]!.title).slice(0, 200);
+      const res = await api.post<{ emojis: string[] }>("/api/entries/suggest-emojis", { titles });
+      const emojis = res.emojis ?? [];
+      const next = parsed.map((r) => ({ ...r }));
+      needIdx.forEach((rowIdx, k) => {
+        next[rowIdx]!.emoji = emojis[k] || next[rowIdx]!.emoji || "❤️";
+      });
+      setRows(next);
+    } catch {
+      // Suggestion unavailable — leave emojis as-is; the server still auto-picks
+      // any left blank at import time, so nothing breaks.
+      setRows(parsed);
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  function setRowEmoji(index: number, value: string) {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, emoji: value } : r)));
+  }
+
   async function onFile(file: File) {
     setError(null);
     setDone(null);
@@ -207,11 +240,16 @@ export function ImportDialog({
         setRows([]);
         setReview(null);
       } else {
-        setRows(parsed);
         setFileName(file.name);
-        // Movies get a match-and-review step; date ideas import straight from the preview.
-        if (isMovie) await buildReview(parsed);
-        else setReview(null);
+        // Movies get a match-and-review step; date ideas get an emoji-fill step so
+        // the auto-picked emoji is shown and editable before importing.
+        if (isMovie) {
+          setRows(parsed);
+          await buildReview(parsed);
+        } else {
+          setReview(null);
+          await fillDateEmojis(parsed);
+        }
         return;
       }
       setFileName(file.name);
@@ -306,8 +344,12 @@ export function ImportDialog({
               />
             </div>
 
-            {/* Date ideas: plain preview table straight from the sheet. */}
-            {rows.length > 0 && !isMovie && (
+            {/* Date ideas: emojis are auto-picked on upload and can be edited here. */}
+            {!isMovie && preparing && (
+              <p className="text-center text-muted text-sm py-6">Picking emojis for {rows.length || "your"} ideas…</p>
+            )}
+
+            {rows.length > 0 && !isMovie && !preparing && (
               <div>
                 <p className="u-label mb-1">
                   {fileName} · {rows.length} row{rows.length === 1 ? "" : "s"} ready
@@ -316,23 +358,35 @@ export function ImportDialog({
                   <table className="w-full text-sm">
                     <thead className="text-faint">
                       <tr className="border-b border-line">
+                        <th className="text-left px-3 py-1.5 font-normal u-label w-16">Emoji</th>
                         <th className="text-left px-3 py-1.5 font-normal u-label">Title</th>
-                        <th className="text-left px-3 py-1.5 font-normal u-label">Emoji</th>
                         <th className="text-left px-3 py-1.5 font-normal u-label">Notes</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rows.slice(0, 50).map((r, i) => (
                         <tr key={i} className="border-b border-line/50 last:border-0">
+                          <td className="px-2 py-1">
+                            <input
+                              type="text"
+                              value={r.emoji ?? ""}
+                              onChange={(e) => setRowEmoji(i, e.target.value)}
+                              maxLength={8}
+                              aria-label={`Emoji for ${r.title}`}
+                              className="w-11 text-center text-lg rounded border border-line bg-panel-3 py-0.5 focus:border-accent outline-none"
+                            />
+                          </td>
                           <td className="px-3 py-1.5 text-ink">{r.title}</td>
-                          <td className="px-3 py-1.5 text-muted">{r.emoji ?? ""}</td>
                           <td className="px-3 py-1.5 text-muted truncate max-w-[16rem]">{r.description ?? ""}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                {rows.length > 50 && <p className="text-faint text-xs mt-1">Showing first 50 of {rows.length}.</p>}
+                <p className="text-faint text-xs mt-1">
+                  Emojis were picked automatically — tap any to change it (your device's emoji keyboard works here).
+                  {rows.length > 50 && ` Showing first 50 of ${rows.length}.`}
+                </p>
               </div>
             )}
 
@@ -398,7 +452,7 @@ export function ImportDialog({
                   <button
                     className="btn-yellow !py-2 !text-base"
                     onClick={runImport}
-                    disabled={count === 0 || matching || importer.isPending}
+                    disabled={count === 0 || matching || preparing || importer.isPending}
                   >
                     {importer.isPending
                       ? "Importing…"
