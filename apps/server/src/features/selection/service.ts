@@ -351,9 +351,19 @@ export async function markCompleted(coupleId: string, collectionId: string) {
  * as-is and simply renumbered 1, 2, 3… in the order they happened. Calendar
  * periods (and their unique keys) still drive the Sunday-morning lock.
  */
-async function displayWeekNumber(collectionId: string, cycleIndex: number, periodStart: Date): Promise<number> {
+async function displayWeekNumber(
+  collectionId: string,
+  cycleIndex: number,
+  periodStart: Date,
+  countFrom: Date | null,
+): Promise<number> {
   const usedBefore = await prisma.weeklyPeriod.count({
-    where: { collectionId, cycleIndex, periodStart: { lt: periodStart }, result: { isNot: null } },
+    where: {
+      collectionId,
+      cycleIndex,
+      periodStart: countFrom ? { gte: countFrom, lt: periodStart } : { lt: periodStart },
+      result: { isNot: null },
+    },
   });
   return usedBefore + 1;
 }
@@ -392,6 +402,10 @@ export interface ResultView {
 export async function getCurrentState(coupleId: string, collectionId: string): Promise<CurrentState> {
   await assertCollectionInCouple(collectionId, coupleId);
   const period = await ensureCurrentPeriod(collectionId);
+  const { weekCountFrom } = await prisma.collection.findUniqueOrThrow({
+    where: { id: collectionId },
+    select: { weekCountFrom: true },
+  });
   const { result, pick, pickLive } = await loadCurrentResult(period.id);
   const availableCount = await prisma.entry.count({
     where: { collectionId, deletedAt: null, status: "available" },
@@ -422,7 +436,7 @@ export async function getCurrentState(coupleId: string, collectionId: string): P
 
   return {
     collectionId,
-    weekIndex: await displayWeekNumber(collectionId, period.cycleIndex, period.periodStart),
+    weekIndex: await displayWeekNumber(collectionId, period.cycleIndex, period.periodStart, weekCountFrom),
     cycleIndex: period.cycleIndex,
     periodStart: period.periodStart.toISOString(),
     nextResetAt: period.periodEnd.toISOString(),
@@ -436,7 +450,8 @@ export async function getCurrentState(coupleId: string, collectionId: string): P
 }
 
 export async function getHistory(coupleId: string, collectionId: string) {
-  await assertCollectionInCouple(collectionId, coupleId);
+  const collection = await assertCollectionInCouple(collectionId, coupleId);
+  const countFrom = collection.weekCountFrom;
   const periods = await prisma.weeklyPeriod.findMany({
     where: { collectionId },
     orderBy: [{ cycleIndex: "desc" }, { weekIndex: "desc" }],
@@ -449,6 +464,11 @@ export async function getHistory(coupleId: string, collectionId: string) {
   const displayWeek = new Map<string, number>();
   const perCycle = new Map<number, number>();
   for (const p of [...used].sort((x, y) => x.periodStart.getTime() - y.periodStart.getTime())) {
+    // Weeks from before the counter was restarted stay listed as week 0 ("Past").
+    if (countFrom && p.periodStart < countFrom) {
+      displayWeek.set(p.id, 0);
+      continue;
+    }
     const n = (perCycle.get(p.cycleIndex) ?? 0) + 1;
     perCycle.set(p.cycleIndex, n);
     displayWeek.set(p.id, n);
@@ -520,6 +540,19 @@ export async function resetToZero(coupleId: string, collectionId: string) {
 
   publish({ type: "collection.changed", coupleId, collectionId });
   publish({ type: "entries.changed", coupleId, collectionId });
+  publish({ type: "result.changed", coupleId, collectionId });
+  return getCurrentState(coupleId, collectionId);
+}
+
+/**
+ * Restart the Week N/52 counter at 1 without touching any ideas, picks or
+ * history: earlier weeks stay in History (shown as "Past") but stop counting.
+ * The current week becomes Week 1 (whether or not it has been used yet).
+ */
+export async function restartWeekCount(coupleId: string, collectionId: string) {
+  await assertCollectionInCouple(collectionId, coupleId);
+  const period = await ensureCurrentPeriod(collectionId);
+  await prisma.collection.update({ where: { id: collectionId }, data: { weekCountFrom: period.periodStart } });
   publish({ type: "result.changed", coupleId, collectionId });
   return getCurrentState(coupleId, collectionId);
 }

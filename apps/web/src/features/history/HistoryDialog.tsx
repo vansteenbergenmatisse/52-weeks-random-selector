@@ -25,7 +25,7 @@ export function HistoryDialog({
         {history.map((h) => (
           <div key={h.periodId} className="flex items-center gap-3 rounded-lg bg-panel-2 border border-line p-3">
             <div className="w-14 text-center">
-              <div className="u-display text-accent text-lg leading-none">W{h.weekIndex}</div>
+              <div className="u-display text-accent text-lg leading-none">{h.weekIndex > 0 ? `W${h.weekIndex}` : "Past"}</div>
               <div className="text-faint text-[10px]">cycle {h.cycleIndex}</div>
             </div>
             {isMovie && h.current.posterPath ? (

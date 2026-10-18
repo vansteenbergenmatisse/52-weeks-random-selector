@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { DateTime } from "luxon";
+import { currentWeekIndex, weekBounds } from "../src/shared/time.js";
 
 const prisma = new PrismaClient();
 
@@ -53,6 +54,24 @@ async function moveWeekResetToSundayMorning() {
         data: { periodStart: start.toUTC().toJSDate(), periodEnd: end.toUTC().toJSDate(), scheduledAt: start.toUTC().toJSDate() },
       });
     }
+  }
+  await prisma.jobRun.create({ data: { jobKey, type: "migration", status: "done" } });
+}
+
+/**
+ * One-time: restart the Dates "Week N/52" counter at 1 (requested 2026-10-18).
+ * Nothing is deleted — earlier picks stay in History as "Past" weeks. Guarded by
+ * a JobRun key so it runs once.
+ */
+async function restartDatesWeekCount() {
+  const jobKey = "migrate:dates-week-count-restart-2026-10-18";
+  if (await prisma.jobRun.findUnique({ where: { jobKey } })) return;
+  const dates = await prisma.collection.findMany({ where: { kind: "dates" } });
+  for (const c of dates) {
+    if (!c.cycleStartDate) continue;
+    const idx = Math.max(1, currentWeekIndex(c.cycleStartDate, c.scheduleTimezone));
+    const start = weekBounds(c.cycleStartDate, c.scheduleTimezone, idx).start;
+    await prisma.collection.update({ where: { id: c.id }, data: { weekCountFrom: start } });
   }
   await prisma.jobRun.create({ data: { jobKey, type: "migration", status: "done" } });
 }
@@ -138,6 +157,7 @@ async function main() {
   }
 
   await moveWeekResetToSundayMorning();
+  await restartDatesWeekCount();
 
   // No example ideas are ever seeded. Both collections start empty; the couple
   // fills them with their own dates/movies. `dates` and `movies` exist only to

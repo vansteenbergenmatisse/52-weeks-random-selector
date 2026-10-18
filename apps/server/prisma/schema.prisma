@@ -117,6 +117,9 @@ model Collection {
   // Cycle anchor: first Sunday (or configured weekday) that week 1 starts on.
   cycleStartDate DateTime?
   cycleIndex     Int      @default(1)
+  // Weeks used before this instant stay in History but are not counted in the
+  // Week N/52 counter (null = count every used week).
+  weekCountFrom  DateTime?
 
   createdAt DateTime @default(now())
 

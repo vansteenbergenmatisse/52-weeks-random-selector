@@ -292,3 +292,33 @@ describe("week numbering", () => {
     expect(history.map((h) => [h.weekIndex, h.current.title !== ""])).toEqual([[2, true], [1, true]]);
   });
 });
+
+describe("restart week counter", () => {
+  it("restarts at Week 1 but keeps earlier picks in history as Past", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    const period = await selection.ensureCurrentPeriod(dates.id);
+    // Four older used weeks, as on the live Dates board.
+    for (let i = 1; i <= 4; i++) {
+      const start = new Date(period.periodStart.getTime() - i * 7 * 24 * 3600 * 1000);
+      const p = await prisma.weeklyPeriod.create({
+        data: { collectionId: dates.id, cycleIndex: period.cycleIndex, weekIndex: -i, periodStart: start, periodEnd: new Date(start.getTime() + 7 * 24 * 3600 * 1000), scheduledAt: start },
+      });
+      const r = await prisma.weeklyResult.create({ data: { periodId: p.id, collectionId: dates.id, currentRevisionNumber: 1 } });
+      await prisma.resultRevision.create({
+        data: { weeklyResultId: r.id, revisionNumber: 1, source: "web", reason: "spin", snapTitle: `Old ${i}`, snapContributor: "Alex" },
+      });
+    }
+    expect((await selection.getCurrentState(couple.id, dates.id)).weekIndex).toBe(5);
+
+    const after = await selection.restartWeekCount(couple.id, dates.id);
+    expect(after.weekIndex).toBe(1);
+    const history = await selection.getHistory(couple.id, dates.id);
+    expect(history).toHaveLength(4);
+    expect(history.every((h) => h.weekIndex === 0)).toBe(true);
+
+    // The current week is still Week 1 after it gets used.
+    await selection.spin(couple.id, dates.id, { userId: a.id });
+    expect((await selection.getCurrentState(couple.id, dates.id)).weekIndex).toBe(1);
+  });
+});
