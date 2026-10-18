@@ -53,6 +53,7 @@ export function ResultPanel({
           <p className="u-label">
             This week's {collection.name.toLowerCase().replace(/s$/, "")} · Week {state.weekIndex}
             {r.reason === "auto" ? " · picked automatically" : ""}
+            {r.reason === "pick" ? " · picked by hand" : ""}
             {state.revision > 1 ? ` · skipped ${state.revision - 1}×` : ""}
           </p>
           <h3 className="text-xl font-bold text-ink truncate">{r.title}</h3>

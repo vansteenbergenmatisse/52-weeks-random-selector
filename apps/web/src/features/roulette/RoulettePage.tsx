@@ -10,6 +10,7 @@ import { ProgressRow } from "../entries/ProgressRow";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { HistoryDialog } from "../history/HistoryDialog";
 import { InviteDialog } from "../auth/InviteDialog";
+import { PickDialog } from "./PickDialog";
 import {
   posterUrl,
   useAddToCalendar,
@@ -163,6 +164,7 @@ function CollectionView({
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [showPick, setShowPick] = useState(false);
 
   const isMovie = collection.kind === "movies";
 
@@ -339,11 +341,20 @@ function CollectionView({
               {phase === "spinning" ? "…" : buttonLabel}
             </button>
           ) : null}
+          {!state?.hasResult && phase === "idle" && (
+            <button
+              className="text-sm text-muted underline hover:text-ink transition disabled:opacity-50 disabled:no-underline"
+              onClick={() => setShowPick(true)}
+              disabled={!state || state.availableCount === 0 || spin.isPending}
+            >
+              or pick {isMovie ? "a movie" : "a date"} yourself
+            </button>
+          )}
           <p className="u-label">
             {phase === "spinning"
               ? "Choosing…"
               : state?.hasResult
-                ? `Week ${state.weekIndex} pick is locked in`
+                ? `Week ${state.weekIndex} pick is locked in · next spin or pick opens ${formatReset(state.nextResetAt)}`
                 : state?.availableCount === 0
                   ? "Add ideas below to start spinning"
                   : `${state?.availableCount} ideas ready · one gets picked`}
@@ -388,8 +399,21 @@ function CollectionView({
       {showSettings && <SettingsDialog open onClose={() => setShowSettings(false)} collection={collection} />}
       {showHistory && <HistoryDialog open onClose={() => setShowHistory(false)} collection={collection} />}
       {showInvite && <InviteDialog open onClose={() => setShowInvite(false)} />}
+      {showPick && <PickDialog open onClose={() => setShowPick(false)} collection={collection} entries={entries} />}
     </>
   );
+}
+
+/** "Sunday 8:00 AM ET" — the weekly reset is always shown in New York time. */
+function formatReset(iso: string): string {
+  const d = new Date(iso);
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "America/New_York" }).format(d);
+  const time = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  }).format(d);
+  return `${day} ${time} ET`;
 }
 
 function IconBtn({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {

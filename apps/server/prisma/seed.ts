@@ -13,12 +13,48 @@ const TZ = process.env.DEFAULT_TIMEZONE ?? "America/New_York";
 // is only set the first time each account is created (the seed is idempotent).
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || randomBytes(24).toString("base64url");
 
-function firstSunday8pm(): Date {
-  let dt = DateTime.now().setZone(TZ).set({ hour: 20, minute: 0, second: 0, millisecond: 0 });
+// The week rolls over — and spin/pick unlock again — on Sunday at 8:00 AM New York time.
+const WEEK_RESET_TIME = "08:00";
+
+function firstSunday8am(): Date {
+  let dt = DateTime.now().setZone(TZ).set({ hour: 8, minute: 0, second: 0, millisecond: 0 });
   while (dt.weekday !== 7 || dt.toMillis() <= Date.now()) {
-    dt = dt.plus({ days: 1 }).set({ hour: 20, minute: 0, second: 0, millisecond: 0 });
+    dt = dt.plus({ days: 1 }).set({ hour: 8, minute: 0, second: 0, millisecond: 0 });
   }
   return dt.toUTC().toJSDate();
+}
+
+/**
+ * One-time move of existing spaces from the old Sunday 8:00 PM week boundary to
+ * Sunday 8:00 AM. Only the time of day on the existing anchor changes, so week
+ * numbers, history and picks are untouched. Guarded by a JobRun key so it runs
+ * once and never overrides a time the couple later sets in Settings.
+ */
+async function moveWeekResetToSundayMorning() {
+  const jobKey = "migrate:week-reset-sunday-8am";
+  if (await prisma.jobRun.findUnique({ where: { jobKey } })) return;
+  const collections = await prisma.collection.findMany();
+  for (const c of collections) {
+    if (!c.cycleStartDate || c.scheduleTime !== "20:00") continue;
+    const anchor = DateTime.fromJSDate(c.cycleStartDate, { zone: c.scheduleTimezone }).set({
+      hour: 8, minute: 0, second: 0, millisecond: 0,
+    });
+    await prisma.collection.update({
+      where: { id: c.id },
+      data: { scheduleTime: WEEK_RESET_TIME, cycleStartDate: anchor.toUTC().toJSDate() },
+    });
+    // Keep stored period bounds in step with the new anchor (read-only metadata).
+    const periods = await prisma.weeklyPeriod.findMany({ where: { collectionId: c.id } });
+    for (const p of periods) {
+      const start = DateTime.fromJSDate(p.periodStart, { zone: c.scheduleTimezone }).set({ hour: 8, minute: 0 });
+      const end = DateTime.fromJSDate(p.periodEnd, { zone: c.scheduleTimezone }).set({ hour: 8, minute: 0 });
+      await prisma.weeklyPeriod.update({
+        where: { id: p.id },
+        data: { periodStart: start.toUTC().toJSDate(), periodEnd: end.toUTC().toJSDate(), scheduledAt: start.toUTC().toJSDate() },
+      });
+    }
+  }
+  await prisma.jobRun.create({ data: { jobKey, type: "migration", status: "done" } });
 }
 
 // NOTE: There is intentionally NO example date/movie seed data. A fresh space
@@ -66,7 +102,7 @@ async function main() {
 
   // Ensure Dates & Movies collections.
   const collections = await prisma.collection.findMany({ where: { coupleId } });
-  const cycleStart = firstSunday8pm();
+  const cycleStart = firstSunday8am();
 
   let dates = collections.find((c) => c.kind === "dates");
   if (!dates) {
@@ -79,7 +115,7 @@ async function main() {
         colorKey: "red",
         scheduleTimezone: TZ,
         scheduleWeekday: 0,
-        scheduleTime: "20:00",
+        scheduleTime: WEEK_RESET_TIME,
         cycleStartDate: cycleStart,
       },
     });
@@ -95,11 +131,13 @@ async function main() {
         colorKey: "blue",
         scheduleTimezone: TZ,
         scheduleWeekday: 0,
-        scheduleTime: "20:00",
+        scheduleTime: WEEK_RESET_TIME,
         cycleStartDate: cycleStart,
       },
     });
   }
+
+  await moveWeekResetToSundayMorning();
 
   // No example ideas are ever seeded. Both collections start empty; the couple
   // fills them with their own dates/movies. `dates` and `movies` exist only to

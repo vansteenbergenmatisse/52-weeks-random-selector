@@ -44,6 +44,28 @@ export async function resultRoutes(app: FastifyInstance) {
     return reply.send({ created: res.created, state: res.state });
   });
 
+  // Pick this week's idea by hand (uses the same once-per-week slot as spin).
+  app.post("/api/collections/:collectionId/pick", async (req, reply) => {
+    const { coupleId, user } = await requireCouple(req);
+    const { collectionId } = req.params as { collectionId: string };
+    const { entryId } = parse(z.object({ entryId: z.string().min(1).max(64) }), req.body ?? {});
+    const res = await selection.pick(coupleId, collectionId, entryId, { userId: user.id, source: "web" });
+    if (res.state.result) {
+      const meta = await collectionMeta(collectionId);
+      await enqueueBroadcast({
+        coupleId,
+        kind: "result",
+        collectionId,
+        weeklyResultId: res.state.result.weeklyResultId,
+        revisionNumber: res.state.result.revision,
+        body: formatResultMessage(res.state, meta),
+      });
+      await calendar.enqueueCalendarPromptIfConfigured(coupleId, meta, res.state);
+      whatsapp.flush(coupleId).catch(() => {});
+    }
+    return reply.send({ created: res.created, state: res.state });
+  });
+
   app.post("/api/collections/:collectionId/reroll", async (req, reply) => {
     const { coupleId, user } = await requireCouple(req);
     const { collectionId } = req.params as { collectionId: string };

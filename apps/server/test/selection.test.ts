@@ -181,3 +181,114 @@ describe("selection", () => {
     expect(await prisma.entry.count({ where: { collectionId: movies.id } })).toBe(2);
   });
 });
+
+describe("pick (choose by hand)", () => {
+  it("picking records the chosen idea as the week's result", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
+    const two = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, title: "Two" } });
+
+    const res = await selection.pick(couple.id, dates.id, two.id, { userId: a.id });
+    expect(res.created).toBe(true);
+    expect(res.state.result?.title).toBe("Two");
+    expect(res.state.result?.reason).toBe("pick");
+    expect((await prisma.entry.findUniqueOrThrow({ where: { id: two.id } })).status).toBe("selected");
+  });
+
+  it("a pick uses up the week: no pick and no fresh draw afterwards", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two", "Three"]);
+    const one = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, title: "One" } });
+    const three = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, title: "Three" } });
+
+    await selection.pick(couple.id, dates.id, one.id, { userId: a.id });
+    await expect(selection.pick(couple.id, dates.id, three.id, { userId: a.id })).rejects.toThrow(/already chosen/);
+    const spun = await selection.spin(couple.id, dates.id, { userId: a.id });
+    expect(spun.created).toBe(false);
+    expect(spun.state.result?.title).toBe("One");
+    expect(await prisma.weeklyResult.count({ where: { collectionId: dates.id } })).toBe(1);
+  });
+
+  it("a spin uses up the week: picking afterwards is refused", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    await selection.spin(couple.id, dates.id, { userId: a.id });
+    const other = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, status: "available" } });
+    await expect(selection.pick(couple.id, dates.id, other.id, { userId: a.id })).rejects.toThrow(/already chosen/);
+  });
+
+  it("dates and movies each get their own weekly pick", async () => {
+    const { couple, a, dates, movies } = await makeCouple();
+    await addEntries(dates.id, a.id, ["Picnic", "Hike"]);
+    await addEntries(movies.id, a.id, ["Alien", "Heat"]);
+    const picnic = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, title: "Picnic" } });
+
+    await selection.pick(couple.id, dates.id, picnic.id, { userId: a.id });
+    const movie = await selection.spin(couple.id, movies.id, { userId: a.id });
+    expect(movie.created).toBe(true);
+    expect(await prisma.weeklyResult.count()).toBe(2);
+  });
+
+  it("rejects an idea that isn't available or belongs to another collection", async () => {
+    const { couple, a, dates, movies } = await makeCouple();
+    await addEntries(movies.id, a.id, ["Alien"]);
+    const alien = await prisma.entry.findFirstOrThrow({ where: { collectionId: movies.id } });
+    await expect(selection.pick(couple.id, dates.id, alien.id, { userId: a.id })).rejects.toThrow(/isn't available/);
+    expect(await prisma.weeklyResult.count()).toBe(0);
+  });
+
+  it("unlocks in the next week window (Sunday morning reset)", async () => {
+    const { couple, a, dates } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    const one = await prisma.entry.findFirstOrThrow({ where: { collectionId: dates.id, title: "One" } });
+    const first = await selection.pick(couple.id, dates.id, one.id, { userId: a.id });
+    // The lock ends at the period end, which is a New York Sunday 8:00 AM.
+    const reset = new Date(first.state.nextResetAt);
+    const ny = new Intl.DateTimeFormat("en-US", { weekday: "long", hour: "numeric", hourCycle: "h23", timeZone: "America/New_York" }).format(reset);
+    expect(ny).toMatch(/Sunday/);
+    expect(ny).toMatch(/8/);
+  });
+});
+
+describe("week numbering", () => {
+  it("starts at Week 1 and only counts up once a week is spun or picked", async () => {
+    const { couple, a, dates, movies } = await makeCouple();
+    await addEntries(dates.id, a.id, ["One", "Two"]);
+    await addEntries(movies.id, a.id, ["Alien"]);
+
+    // Nothing chosen yet: both collections read Week 1, independently.
+    expect((await selection.getCurrentState(couple.id, dates.id)).weekIndex).toBe(1);
+    expect((await selection.getCurrentState(couple.id, movies.id)).weekIndex).toBe(1);
+
+    await selection.spin(couple.id, dates.id, { userId: a.id });
+    expect((await selection.getCurrentState(couple.id, dates.id)).weekIndex).toBe(1);
+
+    // An earlier, already-used week exists (an old pick kept as-is): this week
+    // becomes Week 2 for dates. Movies has nothing used yet, so it stays Week 1.
+    const period = await prisma.weeklyPeriod.findFirstOrThrow({ where: { collectionId: dates.id } });
+    const older = await prisma.weeklyPeriod.create({
+      data: {
+        collectionId: dates.id,
+        cycleIndex: period.cycleIndex,
+        weekIndex: 0,
+        periodStart: new Date(period.periodStart.getTime() - 7 * 24 * 3600 * 1000),
+        periodEnd: period.periodStart,
+        scheduledAt: new Date(period.periodStart.getTime() - 7 * 24 * 3600 * 1000),
+      },
+    });
+    const oldResult = await prisma.weeklyResult.create({
+      data: { periodId: older.id, collectionId: dates.id, currentRevisionNumber: 1 },
+    });
+    await prisma.resultRevision.create({
+      data: {
+        weeklyResultId: oldResult.id, revisionNumber: 1, source: "web", reason: "spin",
+        snapTitle: "Old pick", snapContributor: "Alex",
+      },
+    });
+    expect((await selection.getCurrentState(couple.id, dates.id)).weekIndex).toBe(2);
+    expect((await selection.getCurrentState(couple.id, movies.id)).weekIndex).toBe(1);
+
+    const history = await selection.getHistory(couple.id, dates.id);
+    expect(history.map((h) => [h.weekIndex, h.current.title !== ""])).toEqual([[2, true], [1, true]]);
+  });
+});

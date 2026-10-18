@@ -103,6 +103,25 @@ export function useSpin(collectionId: string) {
   });
 }
 
+/** Choose this week's idea by hand — shares the once-per-week slot with spin. */
+export function usePick(collectionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entryId: string) =>
+      api.post<{ created: boolean; state: CurrentState }>(`/api/collections/${collectionId}/pick`, { entryId }),
+    onSuccess: (data) => {
+      qc.setQueryData(["result", collectionId], { state: data.state });
+      qc.invalidateQueries({ queryKey: ["result", collectionId] });
+      qc.invalidateQueries({ queryKey: ["entries", collectionId] });
+      qc.invalidateQueries({ queryKey: ["collections"] });
+    },
+    // The partner may have used this week's slot first — refresh so the UI locks.
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ["result", collectionId] });
+    },
+  });
+}
+
 export function useSkip(collectionId: string) {
   const qc = useQueryClient();
   return useMutation({

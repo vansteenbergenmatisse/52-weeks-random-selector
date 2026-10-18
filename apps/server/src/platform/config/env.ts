@@ -42,7 +42,7 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   DEFAULT_TIMEZONE: z.string().default("America/New_York"),
   DEFAULT_WEEKDAY: z.coerce.number().min(0).max(6).default(0),
-  DEFAULT_TIME: z.string().default("20:00"),
+  DEFAULT_TIME: z.string().default("08:00"),
   WORKER_TICK_SECONDS: z.coerce.number().default(30),
   // Run the scheduling worker inline in the API process (single-service SQLite
   // deploy). Set false to run a dedicated worker process instead.

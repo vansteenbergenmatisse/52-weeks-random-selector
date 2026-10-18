@@ -76,6 +76,8 @@ export interface CurrentState {
   weekIndex: number;
   cycleIndex: number;
   periodStart: string;
+  /** ISO instant when this week ends and spin/pick unlock again. */
+  nextResetAt: string;
   hasResult: boolean;
   completed: boolean;
   availableCount: number;

@@ -123,7 +123,7 @@ and never expose real couples' data.
 
 ### Scheduling (worker)
 - Default: **Sunday 8:00 PM, `America/New_York`**, DST-aware via Luxon IANA
-  zones (8 PM stays 8 PM across spring-forward / fall-back — never a hardcoded
+  zones (8 AM stays 8 AM across spring-forward / fall-back — never a hardcoded
   offset). Weekday/time/zone are configurable per collection.
 - **Manual** mode waits for a human to spin; **automatic** mode draws on schedule
   even with nobody online.

@@ -172,6 +172,67 @@ export async function spin(
 }
 
 /**
+ * Choose this week's idea/movie by hand instead of spinning. It uses the same
+ * once-per-week slot as `spin`: if the week already has a live result (spun or
+ * picked) it is refused until the weekly reset (Sunday morning, New York time).
+ * Only an idea that is still available in this collection can be picked.
+ *
+ * Returns `created: true` only for the call that actually recorded the pick.
+ */
+export async function pick(
+  coupleId: string,
+  collectionId: string,
+  entryId: string,
+  opts: { userId?: string; source?: SelectionSource } = {},
+): Promise<{ created: boolean; state: CurrentState }> {
+  await assertCollectionInCouple(collectionId, coupleId);
+  const period = await ensureCurrentPeriod(collectionId);
+
+  const { result: existing, pickLive } = await loadCurrentResult(period.id);
+  if (existing) {
+    if (pickLive) throw Errors.conflict("This week's pick is already chosen — it resets Sunday morning");
+    // The old pick was removed from the pool; clear the ghost so a new one can land.
+    await prisma.weeklyResult.deleteMany({ where: { id: existing.id } });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const entry = await tx.entry.findFirst({
+        where: { id: entryId, collectionId, deletedAt: null, status: "available" },
+        include: { contributor: true },
+      });
+      if (!entry) throw Errors.notFound("That idea isn't available to pick");
+
+      const result = await tx.weeklyResult.create({
+        data: { periodId: period.id, collectionId, currentRevisionNumber: 1 },
+      });
+      await tx.resultRevision.create({
+        data: {
+          weeklyResultId: result.id,
+          revisionNumber: 1,
+          entryId: entry.id,
+          source: opts.source ?? "web",
+          reason: "pick",
+          createdByUserId: opts.userId ?? null,
+          ...snapshotData(entry),
+        },
+      });
+      await tx.entry.update({ where: { id: entry.id }, data: { status: "selected" } });
+    });
+  } catch (e) {
+    // Lost the race: the partner already used this week's slot.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      throw Errors.conflict("This week's pick is already chosen — it resets Sunday morning");
+    }
+    throw e;
+  }
+
+  publish({ type: "result.changed", coupleId, collectionId });
+  publish({ type: "entries.changed", coupleId, collectionId });
+  return { created: true, state: await getCurrentState(coupleId, collectionId) };
+}
+
+/**
  * Rerolling is intentionally disabled: a week's pick is LOCKED once it's decided
  * — by whoever spins first, or by the Sunday auto-spin. Neither partner can
  * change it afterwards, so the choice for the week is final and identical for
@@ -283,11 +344,27 @@ export async function markCompleted(coupleId: string, collectionId: string) {
 
 // ── Read models ─────────────────────────────────────────────────────
 
+/**
+ * The week number shown to the couple. It is NOT the calendar week: it starts at
+ * 1 and only counts up once a week has actually been used (a spin or a pick), so
+ * a week with nothing chosen doesn't burn a number. Existing results are kept
+ * as-is and simply renumbered 1, 2, 3… in the order they happened. Calendar
+ * periods (and their unique keys) still drive the Sunday-morning lock.
+ */
+async function displayWeekNumber(collectionId: string, cycleIndex: number, periodStart: Date): Promise<number> {
+  const usedBefore = await prisma.weeklyPeriod.count({
+    where: { collectionId, cycleIndex, periodStart: { lt: periodStart }, result: { isNot: null } },
+  });
+  return usedBefore + 1;
+}
+
 export interface CurrentState {
   collectionId: string;
   weekIndex: number;
   cycleIndex: number;
   periodStart: string;
+  /** When this week ends: spin/pick unlock again at this instant (Sunday morning, New York time). */
+  nextResetAt: string;
   hasResult: boolean;
   completed: boolean;
   availableCount: number;
@@ -345,9 +422,10 @@ export async function getCurrentState(coupleId: string, collectionId: string): P
 
   return {
     collectionId,
-    weekIndex: period.weekIndex,
+    weekIndex: await displayWeekNumber(collectionId, period.cycleIndex, period.periodStart),
     cycleIndex: period.cycleIndex,
     periodStart: period.periodStart.toISOString(),
+    nextResetAt: period.periodEnd.toISOString(),
     hasResult: show,
     completed: show ? !!result!.completedAt : false,
     availableCount,
@@ -366,8 +444,16 @@ export async function getHistory(coupleId: string, collectionId: string) {
       result: { include: { revisions: { orderBy: { revisionNumber: "asc" } } } },
     },
   });
-  return periods
-    .filter((p) => p.result)
+  // Number the used weeks 1, 2, 3… per cycle in the order they happened.
+  const used = periods.filter((p) => p.result);
+  const displayWeek = new Map<string, number>();
+  const perCycle = new Map<number, number>();
+  for (const p of [...used].sort((x, y) => x.periodStart.getTime() - y.periodStart.getTime())) {
+    const n = (perCycle.get(p.cycleIndex) ?? 0) + 1;
+    perCycle.set(p.cycleIndex, n);
+    displayWeek.set(p.id, n);
+  }
+  return used
     .map((p) => {
       const r = p.result!;
       const revs = r.revisions;
@@ -375,7 +461,7 @@ export async function getHistory(coupleId: string, collectionId: string) {
       return {
         periodId: p.id,
         cycleIndex: p.cycleIndex,
-        weekIndex: p.weekIndex,
+        weekIndex: displayWeek.get(p.id)!,
         periodStart: p.periodStart.toISOString(),
         completed: !!r.completedAt,
         completedAt: r.completedAt?.toISOString() ?? null,
@@ -396,7 +482,8 @@ export async function getHistory(coupleId: string, collectionId: string) {
           createdAt: x.createdAt.toISOString(),
         })),
       };
-    });
+    })
+    .sort((a, b) => b.cycleIndex - a.cycleIndex || b.weekIndex - a.weekIndex);
 }
 
 /** Begin a fresh 52-week cycle without deleting history or recycling entries. */
